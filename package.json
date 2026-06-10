@@ -1,0 +1,30 @@
+{
+  "name": "abuzaid-mosque-backend",
+  "version": "1.0.0",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "dev": "nodemon index.js"
+  },
+  "keywords": ["mosque", "abuzaid", "event-hall", "backend"],
+  "author": "",
+  "license": "ISC",
+  "description": "Abuzaid Mosque backend API: mosque information, announcements and event hall booking.",
+  "dependencies": {
+    "bcrypt": "^5.1.1",
+    "cloudinary": "^2.6.1",
+    "cors": "^2.8.5",
+    "cros": "^1.1.0",
+    "dotenv": "^16.5.0",
+    "express": "^5.1.0",
+    "joi": "^17.13.3",
+    "jsonwebtoken": "^9.0.2",
+    "mongoose": "^8.13.2",
+    "multer": "^2.0.0",
+    "nanoid": "^5.1.5",
+    "nodemailer": "^7.0.2",
+    "puppeteer": "^24.20.0",
+    "twilio": "^5.8.0"
+  }
+}

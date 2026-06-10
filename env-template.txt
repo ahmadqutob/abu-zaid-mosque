@@ -1,0 +1,36 @@
+# Copy this content to a new file named .env in your project root
+
+# JWT Secrets (REQUIRED - change these values!)
+SIGNATURE=your_jwt_secret_key_here_make_it_long_and_secure_at_least_32_characters
+CONFIRM_SIGNATURE=your_email_verification_secret_key_here_make_it_different_from_above_at_least_32_characters
+
+# Database
+DB_URL=mongodb://localhost:27017/your_database_name
+
+# Email Configuration
+EMAIL_USER=your_email@gmail.com
+EMAIL_PASS=your_email_password_or_app_password
+
+# Server Configuration
+PORT=3000
+NODE_ENV=development
+
+# Frontend URL
+FRONTEND_URL=http://localhost:3000
+
+# Bearer Token Key
+BEARER_KEY=Bearer
+
+# Cloudinary (REQUIRED for image uploads)
+# Choose either the UPPERCASE or lowercase names; both are supported.
+CLOUDINARY_CLOUD_NAME=your_cloud_name
+CLOUDINARY_API_KEY=your_api_key
+CLOUDINARY_API_SECRET=your_api_secret
+# Alternatively:
+# cloudinary_name=your_cloud_name
+# cloudinary_api_key=your_api_key
+# cloudinary_api_Sercret=your_api_secret
+
+# Mosque info (optional, used in emails/templates)
+MOSQUE_NAME=Abuzaid Mosque
+

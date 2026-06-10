@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Database Relationships - rent-soccer</title>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background-color: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+        }
+        h1, h2 {
+            color: #333;
+            text-align: center;
+        }
+        .diagram {
+            margin: 20px 0;
+            padding: 20px;
+            background-color: white;
+            border-radius: 8px;
+        }
+        .description {
+            margin: 20px 0;
+            padding: 15px;
+            background-color: #f8f9fa;
+            border-radius: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>rent-soccer Database Relationships</h1>
+
+        <div class="description">
+            <h2>Core Entity Relationships</h2>
+            <div class="diagram">
+                <div class="mermaid">
+                    erDiagram
+                        User ||--o{ Product : "creates/updates"
+                        User }o--o{ Product : "likes/wishes"
+                        Product ||--o{ Category : "belongs to"
+                        Product }o--o{ SubCategory : "has"
+                        Product ||--o{ Brand : "belongs to"
+                        Product ||--o{ Review : "has"
+                </div>
+            </div>
+        </div>
+
+        <div class="description">
+            <h2>User Model Details</h2>
+            <div class="diagram">
+                <div class="mermaid">
+                    classDiagram
+                        class User {
+                            +ObjectId _id
+                            +String userName
+                            +String email
+                            +String password
+                            +Date changePasswordTime
+                            +String forgetPassword
+                            +Boolean confirmEmail
+                            +String role
+                            +String gender
+                            +Array wishlist
+                            +Date createdAt
+                            +Date updatedAt
+                        }
+                </div>
+            </div>
+        </div>
+
+        <div class="description">
+            <h2>Product Model Details</h2>
+            <div class="diagram">
+                <div class="mermaid">
+                    classDiagram
+                        class Product {
+                            +ObjectId _id
+                            +String name
+                            +String slug
+                            +Array colors
+                            +String description
+                            +Number sold
+                            +Number stock
+                            +Number price
+                            +Number finalPrice
+                            +Number discount
+                            +Boolean isOnSale
+                            +Boolean isFeatured
+                            +Object mainImage
+                            +Array subImages
+                            +Array likedBy
+                            +ObjectId categoryId
+                            +Array subCategory
+                            +ObjectId brandId
+                            +ObjectId createdBy
+                            +ObjectId updatedBy
+                            +Boolean softDelete
+                            +Date createdAt
+                            +Date updatedAt
+                        }
+                </div>
+            </div>
+        </div>
+
+        <div class="description">
+            <h2>Relationship Cardinality</h2>
+            <div class="diagram">
+                <div class="mermaid">
+                    erDiagram
+                        User ||--o{ Product : "creates"
+                        User ||--o{ Product : "updates"
+                        User }o--o{ Product : "likes"
+                        User }o--o{ Product : "wishes"
+                        Product ||--o{ Category : "belongs to"
+                        Product }o--o{ SubCategory : "has"
+                        Product ||--o{ Brand : "belongs to"
+                        Product ||--o{ Review : "has"
+                </div>
+            </div>
+        </div>
+
+        <div class="description">
+            <h2>Data Flow</h2>
+            <div class="diagram">
+                <div class="mermaid">
+                    graph TD
+                        A[User] -->|Creates| B[Product]
+                        A -->|Updates| B
+                        A -->|Likes| B
+                        A -->|Adds to Wishlist| B
+                        B -->|Belongs to| C[Category]
+                        B -->|Has| D[SubCategory]
+                        B -->|Belongs to| E[Brand]
+                        B -->|Has| F[Review]
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        mermaid.initialize({
+            startOnLoad: true,
+            theme: 'default',
+            securityLevel: 'loose',
+            flowchart: {
+                useMaxWidth: false,
+                htmlLabels: true
+            }
+        });
+    </script>
+</body>
+</html> 
