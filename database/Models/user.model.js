@@ -34,7 +34,7 @@ const userSchema = new Schema({
 
   role: {
     type: String,
-    enum: ["admin", "teacher", "student", "user"],
+    enum: ["superAdmin", "admin", "teacher", "student", "user"],
     default: "user",
   },
   gender: {
@@ -45,6 +45,7 @@ const userSchema = new Schema({
   phone: {
     type: String,
     trim: true,
+    required: [true, "Phone number is required"],
   },
 
   verificationTokenId:{
@@ -64,6 +65,11 @@ const userSchema = new Schema({
     type: Number,
     default: 0,
     min: 0,
+  },
+  deletedAt: {
+    type: Date,
+    default: null,
+    index: true,
   }
 }, {
   timestamps: true,

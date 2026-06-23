@@ -1,6 +1,7 @@
 import { asyncHandler } from "../Services/ErrorHandler.services.js"
 import jwt from "jsonwebtoken";
 import   userModel from "../../database/Models/user.model.js";
+import { isTokenRevoked } from "../Services/tokenBlacklist.services.js";
 
 export const role = {
     admin: "admin",
@@ -27,6 +28,10 @@ const authorization = (accessRoles =[])=>{
         const token = authorization.split(process.env.BEARER_KEY)[1];
         if(!token){
             return next(new Error("Please login first", { cause: 401 }));
+        }
+
+        if (isTokenRevoked(token)) {
+            return next(new Error("Token revoked. Please login again", { cause: 401 }));
         }
         
         const decoded = await jwt.verify(token, process.env.SIGNATURE );

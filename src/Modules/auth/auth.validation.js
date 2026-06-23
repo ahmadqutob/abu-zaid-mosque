@@ -23,6 +23,24 @@ export const adminCreateUser = joi.object({
     role: geniralFeild.role.required(),
 });
 
+export const adminCreateTeacher = joi.object({
+    userName: geniralFeild.userName,
+    email: geniralFeild.email,
+    password: geniralFeild.password,
+    phone: geniralFeild.phone,
+    gender: joi.string().valid("male", "female", "other").optional(),
+    bio: joi.string().max(500).optional(),
+    specialization: joi.string().max(100).optional(),
+    qualification: joi.string().max(200).optional(),
+    experienceYears: joi.number().integer().min(0).optional(),
+}).required();
+
+export const adminListTeachers = joi.object({
+    page: joi.number().integer().min(1).optional(),
+    limit: joi.number().integer().min(1).max(100).optional(),
+    search: joi.string().min(1).max(100).optional(),
+}).required();
+
 // Admin: list users with optional filters and pagination
 export const adminListUsers = joi.object({
     page: joi.number().integer().min(1).optional(),
@@ -48,6 +66,10 @@ export const adminUserIdParam = joi.object({
     id: joi.string().pattern(/^[0-9a-fA-F]{24}$/).required(),
 });
 
+export const adminTeacherIdParam = joi.object({
+    id: joi.string().pattern(/^[0-9a-fA-F]{24}$/).required(),
+});
+
 
 export const token = joi
   .object({
@@ -55,11 +77,7 @@ export const token = joi
   })
   .required();
 
-  export const checkConfirmEmail = joi
-  .object({
-    email: geniralFeild.email
-  })
-  .required();
+
 
   export const signin = joi.object({
     email: geniralFeild.email,
@@ -89,4 +107,9 @@ export const token = joi
     CnewPassword: geniralFeild.password.valid(joi.ref("newPassword")),
   })
   .required();
-  
+
+  export const adminResetPassword = joi.object({
+    id: joi.string().pattern(/^[0-9a-fA-F]{24}$/).required(),
+    newPassword: geniralFeild.password,
+    CnewPassword: geniralFeild.password.valid(joi.ref("newPassword")),
+  }).required();

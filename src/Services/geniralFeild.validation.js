@@ -60,8 +60,38 @@ export const geniralFeild = {
       "string.empty": "Gender cannot be empty",
     }),
 
+  title: joi.string().trim().min(2).max(100).required().messages({
+      "any.required": "Title is required",
+      "string.empty": "Title cannot be empty",
+      "string.min": "Title must be at least 2 characters long",
+      "string.max": "Title cannot exceed 100 characters",
+    }),
 
- 
+  bio: joi.string().trim().min(10).max(1000).required().messages({
+      "any.required": "Bio is required",
+      "string.empty": "Bio cannot be empty",
+      "string.min": "Bio must be at least 10 characters long",
+      "string.max": "Bio cannot exceed 1000 characters",
+    }),
+
+  yearsExperience: joi.number().integer().min(0).max(60).required().messages({
+      "any.required": "Years of experience is required",
+      "number.base": "Years of experience must be a number",
+      "number.integer": "Years of experience must be a whole number",
+      "number.min": "Years of experience cannot be negative",
+      "number.max": "Years of experience cannot exceed 60",
+    }),
+
+  specializations: joi.array().items(joi.string().trim()).default([]),
+
+  qualifications: joi.array().items(joi.string().trim()).default([]),
+
+  teachingLevel: joi.array().items(joi.string().valid("beginner", "intermediate", "advanced", "all levels")).default([]).messages({
+      "any.required": "Teaching level is required",
+      "any.only": "Teaching level must be one of: beginner, intermediate, advanced, all levels",
+      "string.empty": "Teaching level cannot be empty",
+    }),
+
     token: joi.string().required(),
    
    

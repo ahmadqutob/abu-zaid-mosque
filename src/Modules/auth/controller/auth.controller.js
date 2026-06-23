@@ -1,4 +1,6 @@
 import userModel from "../../../../database/Models/user.model.js";
+import teacherModel from "../../../../database/Models/teacher.model.js";
+import auditLogModel from "../../../../database/Models/auditLog.model.js";
 import jwt from "jsonwebtoken";
 import { asyncHandler } from "../../../Services/ErrorHandler.services.js";
 import { compare, hash } from "bcrypt";
@@ -6,7 +8,7 @@ import bcrypt from "bcrypt";
 import { sendEmail } from "../../../Services/SendEmail.services.js";
 import { customAlphabet } from "nanoid";
 import crypto from "crypto";
-
+ 
 // #region one for signin function 
 
 
@@ -16,7 +18,7 @@ const LOCK_MINUTES = 15;
 export const signin = asyncHandler(async (req, res, next) => {
   const { email, password } = req.body;
   const normalizedEmail = typeof email === "string" ? email.trim().toLowerCase() : email;
-  const user = await userModel.findOne({ email: normalizedEmail });
+  const user = await userModel.findOne({ email: normalizedEmail, deletedAt: null });
 
   if (!user) {
     return next(new Error(
@@ -93,7 +95,7 @@ const createUserAndSendVerification = async ({ userName, password, email, phone,
   const emailToken = jwt.sign(
     { email, tokenId },
     process.env.CONFIRM_SIGNATURE,
-    { expiresIn: "1h" }
+    { expiresIn: "50h" }
   );
 
   const newUser = await userModel.create({
@@ -157,17 +159,128 @@ export const adminCreateUser = asyncHandler(async (req, res, next) => {
 });
 
 export const adminCreateTeacher = asyncHandler(async (req, res, next) => {
-  const { userName, password, email, phone, gender } = req.body;
-  const result = await createUserAndSendVerification({
-    userName, password, email, phone, gender, role: "teacher", req,
-  });
-  if (!result.ok) {
-    return res.status(result.status).json({ message: result.message });
+  const {
+    userName,
+    password,
+    email,
+    phone,
+    gender = "male",
+    bio = "",
+    specialization = "",
+    qualification = "",
+    experienceYears = 0,
+  } = req.body;
+
+  // Check if email already exists in User
+  const existingUser = await userModel.findOne({ email: email.toLowerCase() });
+  if (existingUser) {
+    return res.status(400).json({ message: "Email already registered" });
   }
-  return res.status(201).json({
-    message: "User created with role: teacher. Verification email sent.",
-    userId: result.user._id,
+
+  // Hash password
+  const hashedPassword = await bcrypt.hash(password, 12);
+
+  // Create User record with teacher role
+  const newUser = await userModel.create({
+    userName,
+    password: hashedPassword,
+    email: email.toLowerCase(),
+    phone,
+    gender,
+    role: "teacher",
+    confirmEmail: true, // Admin-created teachers are auto-verified
   });
+
+  // Create Teacher record with userId reference
+  const teacher = await teacherModel.create({
+    userId: newUser._id,
+    bio,
+    specialization,
+    qualification,
+    experienceYears,
+  });
+
+  return res.status(201).json({
+    message: "Teacher created successfully",
+    teacherId: teacher._id,
+    userId: newUser._id,
+    data: {
+      teacher,
+      user: { email: newUser.email, userName: newUser.userName },
+    },
+  });
+});
+
+export const adminListTeachers = asyncHandler(async (req, res, next) => {
+  const { page = 1, limit = 20, search = "" } = req.query || {};
+  const numericPage = Math.max(1, parseInt(page, 10) || 1);
+  const numericLimit = Math.min(100, Math.max(1, parseInt(limit, 10) || 20));
+  const skip = (numericPage - 1) * numericLimit;
+
+  const filter = { deletedAt: null };
+  if (search) {
+    const rx = new RegExp(search, "i");
+    filter.$or = [
+      { specialization: rx },
+      { qualification: rx },
+      { bio: rx },
+    ];
+  }
+
+  const [items, total] = await Promise.all([
+    teacherModel
+      .find(filter)
+      .populate("userId", "-password -forgetPassword -verificationTokenId")
+      .sort("-createdAt")
+      .skip(skip)
+      .limit(numericLimit),
+    teacherModel.countDocuments(filter),
+  ]);
+
+  return res.status(200).json({
+    success: true,
+    pagination: { page: numericPage, limit: numericLimit, total, pages: Math.ceil(total / numericLimit) },
+    data: items,
+  });
+});
+
+export const adminGetTeacher = asyncHandler(async (req, res, next) => {
+  const { id } = req.params;
+  const teacher = await teacherModel
+    .findOne({ _id: id, deletedAt: null })
+    .populate("userId", "-password -forgetPassword -verificationTokenId");
+  
+  if (!teacher) return next(new Error("Teacher not found", { cause: 404 }));
+
+  return res.status(200).json({ success: true, data: teacher });
+});
+
+export const adminDeleteTeacher = asyncHandler(async (req, res, next) => {
+  const { id } = req.params;
+  const currentUser = req.user;
+  const ipAddress = req.ip || req.connection.remoteAddress || null;
+  
+  const teacher = await teacherModel.findOne({ _id: id, deletedAt: null });
+  if (!teacher) return next(new Error("Teacher not found", { cause: 404 }));
+  
+  // Soft delete - set deletedAt timestamp
+  teacher.deletedAt = new Date();
+  await teacher.save();
+  
+  // Log the deletion to audit trail
+  const user = await userModel.findById(teacher.userId);
+  await auditLogModel.create({
+    action: "DELETE_TEACHER",
+    performedBy: currentUser._id,
+    performedByRole: currentUser.role,
+    targetUser: teacher.userId,
+    targetUserRole: user?.role || "teacher",
+    targetUserEmail: user?.email || "unknown",
+    targetUserName: user?.userName || teacher.name || "unknown",
+    ipAddress,
+  });
+  
+  return res.status(200).json({ success: true, message: "Teacher deleted successfully" });
 });
 
 // Admin-only: list users (filter by role / search by username or email)
@@ -177,7 +290,7 @@ export const adminListUsers = asyncHandler(async (req, res, next) => {
   const numericLimit = Math.min(100, Math.max(1, parseInt(limit)));
   const skip = (numericPage - 1) * numericLimit;
 
-  const filter = {};
+  const filter = { deletedAt: null };
   if (role) filter.role = role;
   if (search) {
     const rx = new RegExp(search, "i");
@@ -200,7 +313,7 @@ export const adminListUsers = asyncHandler(async (req, res, next) => {
 // Admin-only: get a single user by id
 export const adminGetUser = asyncHandler(async (req, res, next) => {
   const { id } = req.params;
-  const user = await userModel.findById(id)
+  const user = await userModel.findOne({ _id: id, deletedAt: null })
     .select("-password -forgetPassword -verificationTokenId");
   if (!user) return next(new Error("User not found", { cause: 404 }));
   return res.status(200).json({ success: true, data: user });
@@ -231,12 +344,45 @@ export const adminUpdateUser = asyncHandler(async (req, res, next) => {
 // Admin-only: delete user
 export const adminDeleteUser = asyncHandler(async (req, res, next) => {
   const { id } = req.params;
-  if (String(req.user._id) === String(id)) {
+  const currentUser = req.user;
+  const ipAddress = req.ip || req.connection.remoteAddress || null;
+  
+  // Nobody can delete themselves
+  if (String(currentUser._id) === String(id)) {
     return next(new Error("You cannot delete your own account", { cause: 400 }));
   }
-  const deleted = await userModel.findByIdAndDelete(id);
-  if (!deleted) return next(new Error("User not found", { cause: 404 }));
-  return res.status(200).json({ success: true, message: "User deleted" });
+  
+  // Fetch the user to be deleted
+  const userToDelete = await userModel.findOne({ _id: id, deletedAt: null });
+  if (!userToDelete) return next(new Error("User not found", { cause: 404 }));
+  
+  // Only superAdmin can delete admin users
+  if (userToDelete.role === "admin" && currentUser.role !== "superAdmin") {
+    return next(new Error("Admin cant delete them self", { cause: 403 }));
+  }
+  
+  // SuperAdmin cannot be deleted by anyone (including themselves, already checked above)
+  if (userToDelete.role === "superAdmin") {
+    return next(new Error("Super Admin accounts cannot be deleted", { cause: 403 }));
+  }
+  
+  // Soft delete - set deletedAt timestamp
+  userToDelete.deletedAt = new Date();
+  await userToDelete.save();
+  
+  // Log the deletion to audit trail
+  await auditLogModel.create({
+    action: "DELETE_USER",
+    performedBy: currentUser._id,
+    performedByRole: currentUser.role,
+    targetUser: userToDelete._id,
+    targetUserRole: userToDelete.role,
+    targetUserEmail: userToDelete.email,
+    targetUserName: userToDelete.userName,
+    ipAddress,
+  });
+  
+  return res.status(200).json({ success: true, message: "User deleted successfully" });
 });
 
 // Any authenticated user: get own profile
@@ -274,24 +420,13 @@ export const confairmEmails = asyncHandler(async (req, res, next) => {
   // return res.status(200).redirect(`${process.env.FRONTEND_URL}`); //login page url
 });
 
-export const checkConfirmEmail = asyncHandler(async (req, res, next) => {
-  const { email } = req.params;
-  const user = await userModel.findOne({ email });
-  if (!user) {
-    return next(new Error("User not found", { cause: 404 }));
-  }
-  if (!user.confirmEmail) {
-    return next(new Error("Email not confirmed", { cause: 401 }));
-  }
-  return res.status(200).json({ message: "Email confirmed" });
-});
+
 
 export const sendCode = asyncHandler(async (req, res, next) => {
   const { email } = req.body;
-  console.log("Email received:", email);
 
   const user = await userModel.findOne({ email });
-  console.log("User found:", user);
+  // // console.log("User found:", user);
 
   if (!user) {
     return next(new Error("Email does not exist"));
@@ -303,7 +438,6 @@ export const sendCode = asyncHandler(async (req, res, next) => {
   // Initialize the customAlphabet generator
   const generateCode = customAlphabet("012ahm6789", 6);
   const code = generateCode();
-  console.log("Generated code:", code);
 
   try {
     // Send email first
@@ -319,10 +453,8 @@ export const sendCode = asyncHandler(async (req, res, next) => {
       { $set: { forgetPassword: code } },
       { new: true }
     );
-    console.log("Updated user:", updatedUser);
 
     if (!updatedUser) {
-      console.log("Update failed - no user found");
       return next(new Error("Failed to update user"));
     }
 
@@ -330,7 +462,6 @@ export const sendCode = asyncHandler(async (req, res, next) => {
       .status(200)
       .json({ message: "Code sent successfully", updatedUser });
   } catch (error) {
-    console.error("Error in sendCode:", error);
     return next(new Error("Failed to process request: " + error.message));
   }
 });
@@ -356,9 +487,15 @@ export const forgotPassword = asyncHandler(async (req, res, next) => {
 });
 
 export const logout = asyncHandler(async (req, res, next) => {
-  // Stateless JWT logout: client should discard the token.
-  // For server-side invalidation, see suggested security improvements (token blacklist / refresh tokens).
-  return res.json({ message: "Logged out" });
+  const authHeader = req.headers.authorization || "";
+  const token = authHeader.split(process.env.BEARER_KEY || "Bearer ")[1];
+
+  if (token) {
+    revokeToken(token);
+  }
+
+  res.setHeader("Authorization", "");
+  return res.status(200).json({ success: true, message: "Logged out successfully" });
 });
 
 export const changePassword = asyncHandler(async (req, res, next) => {
@@ -376,4 +513,80 @@ export const changePassword = asyncHandler(async (req, res, next) => {
   user.changePasswordTime = Date.now();
   await user.save();
   return res.json({ message: "Password changed successfully" });
+});
+
+// Admin-only: reset password for student or teacher
+export const adminResetPassword = asyncHandler(async (req, res, next) => {
+  const { id, newPassword, CnewPassword } = req.body;
+  const currentUser = req.user;
+  const ipAddress = req.ip || req.connection.remoteAddress || null;
+
+  if (newPassword !== CnewPassword) {
+    return next(new Error("Passwords do not match", { cause: 400 }));
+  }
+
+  // Fetch the user whose password is being reset
+  const targetUser = await userModel.findOne({ _id: id, deletedAt: null });
+  if (!targetUser) return next(new Error("User not found", { cause: 404 }));
+
+  // Only superAdmin can reset admin passwords
+  if (targetUser.role === "admin" && currentUser.role !== "superAdmin") {
+    return next(new Error("Only superAdmin can reset admin passwords", { cause: 403 }));
+  }
+
+  // Hash and update the password
+  const hashedPassword = await bcrypt.hash(newPassword, 12);
+  targetUser.password = hashedPassword;
+  targetUser.changePasswordTime = Date.now();
+  await targetUser.save();
+
+  // Log the password reset to audit trail
+  await auditLogModel.create({
+    action: "RESET_PASSWORD",
+    performedBy: currentUser._id,
+    performedByRole: currentUser.role,
+    targetUser: targetUser._id,
+    targetUserRole: targetUser.role,
+    targetUserEmail: targetUser.email,
+    targetUserName: targetUser.userName,
+    ipAddress,
+  });
+
+  return res.status(200).json({
+    success: true,
+    message: `Password reset successfully for ${targetUser.userName}`,
+  });
+});
+
+// Get audit logs - admin/superAdmin only
+export const getAuditLogs = asyncHandler(async (req, res, next) => {
+  const { page = 1, limit = 20, action, performedBy } = req.query;
+  const numericPage = Math.max(1, parseInt(page));
+  const numericLimit = Math.min(100, Math.max(1, parseInt(limit)));
+  const skip = (numericPage - 1) * numericLimit;
+
+  const filter = {};
+  if (action) filter.action = action;
+  if (performedBy) filter.performedBy = performedBy;
+
+  const logs = await auditLogModel
+    .find(filter)
+    .populate("performedBy", "userName email role")
+    .populate("targetUser", "userName email role")
+    .sort({ timestamp: -1 })
+    .skip(skip)
+    .limit(numericLimit);
+
+  const total = await auditLogModel.countDocuments(filter);
+
+  return res.status(200).json({
+    success: true,
+    data: logs,
+    pagination: {
+      currentPage: numericPage,
+      totalPages: Math.ceil(total / numericLimit),
+      total,
+      limit: numericLimit,
+    },
+  });
 });
