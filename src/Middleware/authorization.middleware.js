@@ -30,7 +30,7 @@ const authorization = (accessRoles =[])=>{
             return next(new Error("Please login first", { cause: 401 }));
         }
 
-        if (isTokenRevoked(token)) {
+        if (await isTokenRevoked(token)) {
             return next(new Error("Token revoked. Please login again", { cause: 401 }));
         }
         

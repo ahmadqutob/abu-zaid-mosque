@@ -7,7 +7,12 @@
     "test": "echo \"Error: no test specified\" && exit 1",
     "dev": "nodemon index.js"
   },
-  "keywords": ["mosque", "abuzaid", "event-hall", "backend"],
+  "keywords": [
+    "mosque",
+    "abuzaid",
+    "event-hall",
+    "backend"
+  ],
   "author": "",
   "license": "ISC",
   "description": "Abuzaid Mosque backend API: mosque information, announcements and event hall booking.",
@@ -18,6 +23,7 @@
     "cros": "^1.1.0",
     "dotenv": "^16.5.0",
     "express": "^5.1.0",
+    "express-rate-limit": "^8.5.2",
     "joi": "^17.13.3",
     "jsonwebtoken": "^9.0.2",
     "mongoose": "^8.13.2",
@@ -25,6 +31,7 @@
     "nanoid": "^5.1.5",
     "nodemailer": "^7.0.2",
     "puppeteer": "^24.20.0",
+    "redis": "^6.0.1",
     "twilio": "^5.8.0"
   }
 }

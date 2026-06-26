@@ -1,7 +1,6 @@
 import connectDB from '../database/ConnectDB.js'
 import authRouter from './Modules/auth/auth.router.js'
-import bookingRouter from './Modules/booking/booking.router.js'
-import postRouter from './Modules/Posts/Posts.router.js'
+// import postRouter from './Modules/Posts/Posts.router.js'
 import cors from 'cors'
 
 const initApp = (app, express, next) => {
@@ -16,8 +15,7 @@ const initApp = (app, express, next) => {
 
   // Abuzaid Mosque API routes
   app.use("/auth", authRouter)
-  app.use("/event-booking", bookingRouter)
-  app.use("/posts", postRouter)
+  // app.use("/posts", postRouter)
 
 
 

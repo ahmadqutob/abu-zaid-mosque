@@ -30,9 +30,12 @@ export const adminCreateTeacher = joi.object({
     phone: geniralFeild.phone,
     gender: joi.string().valid("male", "female", "other").optional(),
     bio: joi.string().max(500).optional(),
-    specialization: joi.string().max(100).optional(),
-    qualification: joi.string().max(200).optional(),
+    specialization: joi.string().allow("").max(200).optional(),
+    specializations: joi.array().items(joi.string().max(100)).optional(),
+    qualification: joi.string().allow("").max(200).optional(),
+    qualifications: joi.array().items(joi.string().max(200)).optional(),
     experienceYears: joi.number().integer().min(0).optional(),
+    yearsExperience: joi.number().integer().min(0).optional(),
 }).required();
 
 export const adminListTeachers = joi.object({

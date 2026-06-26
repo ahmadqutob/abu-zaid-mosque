@@ -28,6 +28,10 @@ const teacherSchema = new Schema({
     type: Date,
     default: null,
     index: true,
+  },
+  createdBy:{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: "User",
   }
 }, {
   timestamps: true,

@@ -18,15 +18,21 @@ const validation = (schema)=>{
         }
 
         const MakeValidation =schema.validate(inputData , {abortEarly:false ,
-            stripUnknown: true});//to remove extra fields not in the schema (helps avoid injection attacks).
+            stripUnknown: true});
 
-
- 
+        if (MakeValidation.error?.details) {
+            const errors = MakeValidation.error.details.map(err => err.message);
+            return res.status(400).json({ message: 'ERRORS', errors });
+        }
         
-    if (MakeValidation.error?.details) {
-        const errors = MakeValidation.error.details.map(err => err.message);
-        return res.status(400).json({ message: 'ERRORS', errors });
-      }
+        // Update req.body, req.query, req.params with validated values
+        if (req.body) {
+            for (const key of Object.keys(req.body)) {
+                if (MakeValidation.value[key] !== undefined) {
+                    req.body[key] = MakeValidation.value[key];
+                }
+            }
+        }
         return next();
 
     }

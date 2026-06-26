@@ -34,6 +34,45 @@ export const geniralFeild = {
       "string.pattern.base": "Password must include upper, lower, number and a symbol",
     }),
 
+    oldPassword: joi.string()
+    .min(8)
+    .max(64)
+    .pattern(/^(?=.*[a-z])(?=.*[A-Z])(?=.*[0-9])(?=.*[^A-Za-z0-9]).+$/)
+    .required()
+    .messages({
+      "any.required": "old password is required",
+      "string.empty": "old password cannot be empty",
+      "string.min": "Old password must be at least 8 characters long",
+      "string.max": "Old password cannot exceed 64 characters",
+      "string.pattern.base": "Old password must include upper, lower, number and a symbol",
+    }),
+
+      newPassword: joi.string()
+    .min(8)
+    .max(64)
+    .pattern(/^(?=.*[a-z])(?=.*[A-Z])(?=.*[0-9])(?=.*[^A-Za-z0-9]).+$/)
+    .required()
+    .messages({
+      "any.required": "new password is required",
+      "string.empty": "new password cannot be empty",
+      "string.min": "New password must be at least 8 characters long",
+      "string.max": "New password cannot exceed 64 characters",
+      "string.pattern.base": "New password must include upper, lower, number and a symbol",
+    }),
+    
+      CnewPassword: joi.string()
+    .min(8)
+    .max(64)
+    .pattern(/^(?=.*[a-z])(?=.*[A-Z])(?=.*[0-9])(?=.*[^A-Za-z0-9]).+$/)
+    .required()
+    .messages({
+      "any.required": "confirm new password is required",
+      "string.empty": "confirm new password cannot be empty",
+      "string.min": "Confirm new password must be at least 8 characters long",
+      "string.max": "Confirm new password cannot exceed 64 characters",
+      "string.pattern.base": "Confirm new password must include upper, lower, number and a symbol",
+    }),
+
   phone: joi.string()
     .pattern(/^[+]?[\d\s\-\(\)]{8,15}$/)
     .required()

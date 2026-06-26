@@ -8,7 +8,8 @@ import bcrypt from "bcrypt";
 import { sendEmail } from "../../../Services/SendEmail.services.js";
 import { customAlphabet } from "nanoid";
 import crypto from "crypto";
- 
+import { revokeToken } from "../../../Services/tokenBlacklist.services.js";
+
 // #region one for signin function 
 
 
@@ -165,13 +166,15 @@ export const adminCreateTeacher = asyncHandler(async (req, res, next) => {
     email,
     phone,
     gender = "male",
-    bio = "",
-    specialization = "",
-    qualification = "",
-    experienceYears = 0,
+    bio,
+    specialization,
+    specializations,
+    qualification,
+    qualifications,
+    experienceYears,
+    yearsExperience,
   } = req.body;
-
-  // Check if email already exists in User
+   // Check if email already exists in userModel
   const existingUser = await userModel.findOne({ email: email.toLowerCase() });
   if (existingUser) {
     return res.status(400).json({ message: "Email already registered" });
@@ -191,19 +194,33 @@ export const adminCreateTeacher = asyncHandler(async (req, res, next) => {
     confirmEmail: true, // Admin-created teachers are auto-verified
   });
 
+  // Map values from request to match database schema format
+  const dbSpecialization = (specializations && Array.isArray(specializations))
+    ? specializations.join(", ")
+    : (specialization || "");
+
+  const dbQualification = (qualifications && Array.isArray(qualifications))
+    ? qualifications.join(", ")
+    : (qualification || "");
+
+  const dbExperienceYears = yearsExperience !== undefined ? yearsExperience : (experienceYears || 0);
+
   // Create Teacher record with userId reference
   const teacher = await teacherModel.create({
     userId: newUser._id,
     bio,
-    specialization,
-    qualification,
-    experienceYears,
+    specialization: dbSpecialization,
+    qualification: dbQualification,
+    experienceYears: dbExperienceYears,
   });
+  console.log("Teacher created:", teacher);
+  console.log(dbSpecialization, dbQualification, dbExperienceYears);
 
   return res.status(201).json({
     message: "Teacher created successfully",
     teacherId: teacher._id,
     userId: newUser._id,
+    createdBy: req.user._id,
     data: {
       teacher,
       user: { email: newUser.email, userName: newUser.userName },
@@ -249,7 +266,7 @@ export const adminGetTeacher = asyncHandler(async (req, res, next) => {
   const teacher = await teacherModel
     .findOne({ _id: id, deletedAt: null })
     .populate("userId", "-password -forgetPassword -verificationTokenId");
-  
+
   if (!teacher) return next(new Error("Teacher not found", { cause: 404 }));
 
   return res.status(200).json({ success: true, data: teacher });
@@ -259,14 +276,14 @@ export const adminDeleteTeacher = asyncHandler(async (req, res, next) => {
   const { id } = req.params;
   const currentUser = req.user;
   const ipAddress = req.ip || req.connection.remoteAddress || null;
-  
+
   const teacher = await teacherModel.findOne({ _id: id, deletedAt: null });
   if (!teacher) return next(new Error("Teacher not found", { cause: 404 }));
-  
+
   // Soft delete - set deletedAt timestamp
   teacher.deletedAt = new Date();
   await teacher.save();
-  
+
   // Log the deletion to audit trail
   const user = await userModel.findById(teacher.userId);
   await auditLogModel.create({
@@ -279,7 +296,7 @@ export const adminDeleteTeacher = asyncHandler(async (req, res, next) => {
     targetUserName: user?.userName || teacher.name || "unknown",
     ipAddress,
   });
-  
+
   return res.status(200).json({ success: true, message: "Teacher deleted successfully" });
 });
 
@@ -290,7 +307,7 @@ export const adminListUsers = asyncHandler(async (req, res, next) => {
   const numericLimit = Math.min(100, Math.max(1, parseInt(limit)));
   const skip = (numericPage - 1) * numericLimit;
 
-  const filter = { deletedAt: null };
+  const filter = { deletedAt: null, role: "user" };
   if (role) filter.role = role;
   if (search) {
     const rx = new RegExp(search, "i");
@@ -313,7 +330,7 @@ export const adminListUsers = asyncHandler(async (req, res, next) => {
 // Admin-only: get a single user by id
 export const adminGetUser = asyncHandler(async (req, res, next) => {
   const { id } = req.params;
-  const user = await userModel.findOne({ _id: id, deletedAt: null })
+  const user = await userModel.findOne({ _id: id, role: "user", deletedAt: null })
     .select("-password -forgetPassword -verificationTokenId");
   if (!user) return next(new Error("User not found", { cause: 404 }));
   return res.status(200).json({ success: true, data: user });
@@ -346,30 +363,30 @@ export const adminDeleteUser = asyncHandler(async (req, res, next) => {
   const { id } = req.params;
   const currentUser = req.user;
   const ipAddress = req.ip || req.connection.remoteAddress || null;
-  
+
   // Nobody can delete themselves
   if (String(currentUser._id) === String(id)) {
     return next(new Error("You cannot delete your own account", { cause: 400 }));
   }
-  
+
   // Fetch the user to be deleted
-  const userToDelete = await userModel.findOne({ _id: id, deletedAt: null });
+  const userToDelete = await userModel.findOne({ _id: id, role: "user", deletedAt: null });
   if (!userToDelete) return next(new Error("User not found", { cause: 404 }));
-  
+
   // Only superAdmin can delete admin users
   if (userToDelete.role === "admin" && currentUser.role !== "superAdmin") {
     return next(new Error("Admin cant delete them self", { cause: 403 }));
   }
-  
+
   // SuperAdmin cannot be deleted by anyone (including themselves, already checked above)
   if (userToDelete.role === "superAdmin") {
     return next(new Error("Super Admin accounts cannot be deleted", { cause: 403 }));
   }
-  
+
   // Soft delete - set deletedAt timestamp
   userToDelete.deletedAt = new Date();
   await userToDelete.save();
-  
+
   // Log the deletion to audit trail
   await auditLogModel.create({
     action: "DELETE_USER",
@@ -381,7 +398,7 @@ export const adminDeleteUser = asyncHandler(async (req, res, next) => {
     targetUserName: userToDelete.userName,
     ipAddress,
   });
-  
+
   return res.status(200).json({ success: true, message: "User deleted successfully" });
 });
 
@@ -395,10 +412,10 @@ export const me = asyncHandler(async (req, res, next) => {
 export const confairmEmails = asyncHandler(async (req, res, next) => {
   const { token } = req.params;
 
-  const decoded = await jwt.verify(token, process.env.CONFIRM_SIGNATURE );
+  const decoded = await jwt.verify(token, process.env.CONFIRM_SIGNATURE);
   const checkuser = await userModel.findOne({ email: decoded.email });
   // Validate token payload
-   if (
+  if (
     !decoded ||
     !decoded.email ||
     typeof decoded.email !== "string" ||
@@ -491,7 +508,7 @@ export const logout = asyncHandler(async (req, res, next) => {
   const token = authHeader.split(process.env.BEARER_KEY || "Bearer ")[1];
 
   if (token) {
-    revokeToken(token);
+    await revokeToken(token);
   }
 
   res.setHeader("Authorization", "");
@@ -504,6 +521,9 @@ export const changePassword = asyncHandler(async (req, res, next) => {
 
   if (newPassword !== CnewPassword) {
     return next(new Error("New password and confirmation do not match", { cause: 400 }));
+  }
+  if (newPassword === oldPassword) {
+    return next(new Error("New password cannot be the same as the old password", { cause: 400 }));
   }
   const matches = await bcrypt.compare(oldPassword, user.password);
   if (!matches) {
@@ -541,20 +561,20 @@ export const adminResetPassword = asyncHandler(async (req, res, next) => {
   await targetUser.save();
 
   // Log the password reset to audit trail
-  await auditLogModel.create({
-    action: "RESET_PASSWORD",
-    performedBy: currentUser._id,
-    performedByRole: currentUser.role,
-    targetUser: targetUser._id,
-    targetUserRole: targetUser.role,
-    targetUserEmail: targetUser.email,
-    targetUserName: targetUser.userName,
-    ipAddress,
-  });
+  // await auditLogModel.create({
+  //   action: "RESET_PASSWORD",
+  //   performedBy: currentUser._id,
+  //   performedByRole: currentUser.role,
+  //   targetUser: targetUser._id,
+  //   targetUserRole: targetUser.role,
+  //   targetUserEmail: targetUser.email,
+  //   targetUserName: targetUser.userName,
+  //   ipAddress,
+  // });
 
   return res.status(200).json({
     success: true,
-    message: `Password reset successfully for ${targetUser.userName}`,
+    message: `Password reset successfully for ${targetUser.userName} ,${targetUser.email}`,
   });
 });
 

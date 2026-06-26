@@ -3,6 +3,7 @@ import * as authController from './controller/auth.controller.js'
 import authorization from "../../Middleware/authorization.middleware.js";
 import validation from "../../Middleware/validation.middleware.js";
 import * as validationSchema from './auth.validation.js'
+import rateLimit from 'express-rate-limit';
 const router = new Router();
 
 const ALL_ROLES = ["admin", "teacher", "student", "user"];
@@ -31,6 +32,7 @@ router.patch(
   authController.changePassword
 );
 
+// user management routes for admin
 // Admin-only user management (CRUD)
 router.post(
   "/admin/users",
