@@ -37,7 +37,7 @@ const teacherSchema = new Schema({
   timestamps: true,
 });
 
-teacherSchema.index({ userId: 1 });
+
 
 const teacherModel = mongoose.models.Teacher || model("Teacher", teacherSchema);
 

@@ -1,5 +1,8 @@
 import connectDB from '../database/ConnectDB.js'
 import authRouter from './Modules/auth/auth.router.js'
+import prayerTimesRouter from './Modules/prayerTimes/prayerTimes.router.js'
+import nextFridayRouter from './Modules/nextFriday/nextFriday.router.js'
+import eventRouter from './Modules/event/event.router.js'
 // import postRouter from './Modules/Posts/Posts.router.js'
 import cors from 'cors'
 
@@ -15,6 +18,9 @@ const initApp = (app, express, next) => {
 
   // Abuzaid Mosque API routes
   app.use("/auth", authRouter)
+  app.use("/prayer-times", prayerTimesRouter)
+  app.use("/next-friday", nextFridayRouter)
+  app.use("/event", eventRouter)
   // app.use("/posts", postRouter)
 
 

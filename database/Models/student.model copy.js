@@ -61,8 +61,7 @@ const studentSchema = new Schema({
   timestamps: true,
 });
 
-studentSchema.index({ userId: 1 });
-studentSchema.index({ studentNumber: 1 });
+
 studentSchema.index({ status: 1 });
 studentSchema.index({ enrollmentDate: 1 });
 

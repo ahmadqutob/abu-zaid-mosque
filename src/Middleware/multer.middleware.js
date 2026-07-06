@@ -1,8 +1,5 @@
- 
-
- 
- 
 import multer from "multer"
+import fs from 'fs'
 
 // handler multer error
 export const HME=(err,req,res,next)=>{
@@ -22,6 +19,9 @@ function fileUpload  () {
      const storage = multer.diskStorage({
          destination:  (req, res, cb)=>{
             //Where to save files locally
+            if (!fs.existsSync('uploads')) {
+                fs.mkdirSync('uploads', { recursive: true });
+            }
              cb(null,'uploads')
          },
          filename: (req, file, cb)=>{

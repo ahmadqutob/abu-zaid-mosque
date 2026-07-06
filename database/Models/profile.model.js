@@ -34,7 +34,7 @@ const profileSchema = new Schema({
   timestamps: true,
 });
 
-profileSchema.index({ userId: 1 });
+
 
 const profileModel = mongoose.models.Profile || model("Profile", profileSchema);
 
