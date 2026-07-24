@@ -3,6 +3,8 @@ import authRouter from './Modules/auth/auth.router.js'
 import prayerTimesRouter from './Modules/prayerTimes/prayerTimes.router.js'
 import nextFridayRouter from './Modules/nextFriday/nextFriday.router.js'
 import eventRouter from './Modules/event/event.router.js'
+import contributionRouter from './Modules/contribution/contribution.router.js'
+import courseRouter from './Modules/course/course.router.js'
 // import postRouter from './Modules/Posts/Posts.router.js'
 import cors from 'cors'
 
@@ -21,6 +23,8 @@ const initApp = (app, express, next) => {
   app.use("/prayer-times", prayerTimesRouter)
   app.use("/next-friday", nextFridayRouter)
   app.use("/event", eventRouter)
+  app.use("/contribution", contributionRouter)
+  app.use("/course", courseRouter)
   // app.use("/posts", postRouter)
 
 

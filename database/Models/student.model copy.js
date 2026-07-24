@@ -52,6 +52,12 @@ const studentSchema = new Schema({
     type: String,
     trim: true,
   },
+  level: {
+    type: String,
+    trim: true,
+    enum: ["beginner", "intermediate", "advanced"],
+    default: "beginner",
+  },
   emergencyContact: {
     name: String,
     phone: String,
