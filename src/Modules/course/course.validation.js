@@ -301,6 +301,26 @@ export const courseId = Joi.object({
     }),
 });
 
+export const teacherIdParam = Joi.object({
+  teacherId: Joi.string()
+    .pattern(objectIdPattern)
+    .required()
+    .messages({
+      "string.pattern.base": "Invalid teacher ID format",
+      "any.required": "Teacher ID is required",
+    }),
+});
+
+export const courseIdParam = Joi.object({
+  courseId: Joi.string()
+    .pattern(objectIdPattern)
+    .required()
+    .messages({
+      "string.pattern.base": "Invalid course ID format",
+      "any.required": "Course ID is required",
+    }),
+});
+
 
 // ─── PATCH: CHANGE STATUS ────────────────────────────────────────────────────
 export const changeCourseStatus = Joi.object({

@@ -505,7 +505,7 @@ export const forgotPassword = asyncHandler(async (req, res, next) => {
 
 export const logout = asyncHandler(async (req, res, next) => {
   const authHeader = req.headers.authorization || "";
-  const token = authHeader.split(process.env.BEARER_KEY || "Bearer ")[1];
+  const token = authHeader.split(process.env.BEARER_KEY || "Bearer_")[1];
 
   if (token) {
     await revokeToken(token);

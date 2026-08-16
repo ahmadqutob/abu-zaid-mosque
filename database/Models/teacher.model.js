@@ -24,6 +24,10 @@ const teacherSchema = new Schema({
     default: 0,
     min: [0, "Years of experience cannot be negative"],
   },
+  image: {
+    url: { type: String, default: null },
+    public_id: { type: String, default: null },
+  },
   deletedAt: {
     type: Date,
     default: null,

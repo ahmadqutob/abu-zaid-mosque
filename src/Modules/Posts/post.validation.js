@@ -1,67 +1,58 @@
 import Joi from "joi";
 
-// Validation schema for creating a post
+const CATEGORIES = [
+  "announcement",
+  "lecture",
+  "quran_competition",
+  "friday_sermon",
+  "event",
+  "charity",
+  "prayer_schedule",
+  "general"
+];
+
+// Validation schema for creating a mosque post
 export const createPost = Joi.object({
   title: Joi.string()
     .min(5)
-    .max(100)
+    .max(150)
     .required()
     .messages({
       'string.empty': 'Title is required',
       'string.min': 'Title must be at least 5 characters long',
-      'string.max': 'Title cannot exceed 100 characters',
+      'string.max': 'Title cannot exceed 150 characters',
       'any.required': 'Title is required'
     }),
   
   content: Joi.string()
     .min(10)
-    .max(5000)
+    .max(10000)
     .required()
     .messages({
       'string.empty': 'Content is required',
-      'string.min': 'Content must be at least 50 characters long',
-      'string.max': 'Content cannot exceed 5000 characters',
+      'string.min': 'Content must be at least 10 characters long',
+      'string.max': 'Content cannot exceed 10000 characters',
       'any.required': 'Content is required'
     }),
   
-  excerpt: Joi.string()// //A short summary or preview of the post
-    .max(200)
-    .optional()
-    .messages({
-      'string.empty': 'Excerpt is required',
-      'string.max': 'Excerpt cannot exceed 200 characters',
-      'any.required': 'Excerpt is required'
-    }),
-  slug: Joi.string()
-    .pattern(/^[a-z0-9]+(?:-[a-z0-9]+)*$/)
-    .optional()
-    .messages({
-      'string.pattern.base': 'Slug may contain lowercase letters, numbers and dashes only'
-    }),
- 
-  tags: Joi.array()
-    .items(
-      Joi.string()
-        .min(1)
-        .max(20)
-        .trim()
-        .messages({
-          'string.min': 'Each tag must be at least 1 characters long',
-          'string.max': 'Each tag cannot exceed 20 characters'
-        })
-    )
-    .max(10)
-    .optional()
-    .messages({
-      'array.max': 'Cannot have more than 10 tags'
-    }),
   
-  featured: Joi.boolean()
+
+  category: Joi.string()
+    .valid(...CATEGORIES)
+    .default('general')
+    .optional()
+    .messages({
+      'any.only': `Category must be one of: ${CATEGORIES.join(', ')}`
+    }),
+
+  slug: Joi.string()
+    .optional()
+    .allow('', null),
+  isPinned: Joi.boolean()
     .default(false)
     .optional(),
-  
   published: Joi.boolean()
-    .default(false)
+    .default(true)
     .optional(),
 
   // Files injected by validation middleware from multer
@@ -105,148 +96,64 @@ export const createPost = Joi.object({
     }),
 });
 
-// Validation schema for updating a post
+// Validation schema for updating a mosque post
 export const updatePost = Joi.object({
+  id: Joi.string()
+    .pattern(/^[0-9a-fA-F]{24}$/)
+    .optional(),
+
   title: Joi.string()
     .min(5)
-    .max(100)
+    .max(150)
     .optional()
     .messages({
       'string.min': 'Title must be at least 5 characters long',
-      'string.max': 'Title cannot exceed 100 characters'
+      'string.max': 'Title cannot exceed 150 characters'
     }),
   
   content: Joi.string()
-    .min(50)
-    .max(5000)
+    .min(10)
+    .max(10000)
     .optional()
     .messages({
-      'string.min': 'Content must be at least 50 characters long',
-      'string.max': 'Content cannot exceed 5000 characters'
+      'string.min': 'Content must be at least 10 characters long',
+      'string.max': 'Content cannot exceed 10000 characters'
     }),
-  
-  excerpt: Joi.string()
-    .max(200)
+
+  category: Joi.string()
+    .valid(...CATEGORIES)
     .optional()
     .messages({
-      'string.max': 'Excerpt cannot exceed 200 characters'
+      'any.only': `Category must be one of: ${CATEGORIES.join(', ')}`
     }),
   
- 
-  
-  tags: Joi.array()
-    .items(
-      Joi.string()
-        .min(2)
-        .max(20)
-        .trim()
-        .messages({
-          'string.min': 'Each tag must be at least 2 characters long',
-          'string.max': 'Each tag cannot exceed 20 characters'
-        })
-    )
-    .max(10)
-    .optional()
-    .messages({
-      'array.max': 'Cannot have more than 10 tags'
-    }),
-  
-  featured: Joi.boolean()
-    .optional(),
-  
-  published: Joi.boolean()
-    .optional(),
+  isPinned: Joi.boolean().optional(),
+  published: Joi.boolean().optional(),
 });
 
 // Validation schema for getting posts with filters
 export const getPosts = Joi.object({
-  page: Joi.number()
-    .integer()
-    .min(1)
-    .default(1)
-    .optional(),
-  
-  limit: Joi.number()
-    .integer()
-    .min(1)
-    .max(50)
-    .default(10)
-    .optional(),
+  page: Joi.number().integer().min(1).default(1).optional(),
+  limit: Joi.number().integer().min(1).max(50).default(10).optional(),
+  category: Joi.string().valid(...CATEGORIES).optional(),
+  isPinned: Joi.boolean().optional(),
+  published: Joi.boolean().default(true).optional(),
+  author: Joi.string().pattern(/^[0-9a-fA-F]{24}$/).optional()
  
-  featured: Joi.boolean()
-    .optional(),
-  
-  published: Joi.boolean()
-    .default(true)
-    .optional(),
-  
-  author: Joi.string()
-    .pattern(/^[0-9a-fA-F]{24}$/)
-    .optional()
-    .messages({
-      'string.pattern.base': 'Invalid author ID format'
-    }),
-  
-  search: Joi.string()
-    .min(2)
-    .max(100)
-    .optional()
-    .messages({
-      'string.min': 'Search term must be at least 2 characters long',
-      'string.max': 'Search term cannot exceed 100 characters'
-    }),
-  
-  sort: Joi.string()
-    .valid('-createdAt', 'createdAt', '-publishedAt', 'publishedAt', '-views', 'views', '-likesCount', 'likesCount')
-    .default('-createdAt')
-    .optional(),
 });
 
-// Validation schema for getting posts by tag
-export const getPostsByTag = Joi.object({
-  tag: Joi.string()
-    .min(1)
-    .max(20)
-    .trim()
+// Validation schema for getting posts by category
+export const getPostsByCategory = Joi.object({
+  category: Joi.string()
+    .valid(...CATEGORIES)
     .required()
     .messages({
-      'string.empty': 'Tag is required',
-      'string.min': 'Tag must be at least 1 character long',
-      'string.max': 'Tag cannot exceed 20 characters',
-      'any.required': 'Tag is required'
+      'any.required': 'Category is required',
+      'any.only': `Category must be one of: ${CATEGORIES.join(', ')}`
     }),
-  
-  page: Joi.number()
-    .integer()
-    .min(1)
-    .default(1)
-    .optional(),
-  
-  limit: Joi.number()
-    .integer()
-    .min(1)
-    .max(50)
-    .default(10)
-    .optional(),
-  
-  featured: Joi.boolean()
-    .optional(),
-  
-  published: Joi.boolean()
-    .default(true)
-    .optional(),
-  
-  author: Joi.string()
-    .pattern(/^[0-9a-fA-F]{24}$/)
-    .optional()
-    .messages({
-      'string.pattern.base': 'Invalid author ID format'
-    }),
-  
-  sort: Joi.string()
-    .valid('-createdAt', 'createdAt', '-publishedAt', 'publishedAt', '-views', 'views', '-likesCount', 'likesCount')
-    .default('-createdAt')
-    .optional(),
+  page: Joi.number().integer().min(1).default(1).optional(),
+  limit: Joi.number().integer().min(1).max(50).default(10).optional(),
+  sort: Joi.string().default('-createdAt').optional(),
 });
 
 // Validation schema for post ID parameter
@@ -259,3 +166,7 @@ export const postId = Joi.object({
       'any.required': 'Post ID is required'
     })
 });
+
+ 
+
+  

@@ -19,7 +19,7 @@ NODE_ENV=development
 FRONTEND_URL=http://localhost:3000
 
 # Bearer Token Key
-BEARER_KEY=Bearer
+BEARER_KEY=Bearer_
 
 # Cloudinary (REQUIRED for image uploads)
 # Choose either the UPPERCASE or lowercase names; both are supported.

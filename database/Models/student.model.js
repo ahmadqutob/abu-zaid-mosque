@@ -13,15 +13,15 @@ const studentSchema = new Schema({
     unique: true,
     trim: true,
   },
-  guardianName: {
+  parentName: {
     type: String,
     trim: true,
   },
-  guardianPhone: {
+  parentPhone: {
     type: String,
     trim: true,
   },
-  guardianEmail: {
+  parentEmail: {
     type: String,
     trim: true,
   },

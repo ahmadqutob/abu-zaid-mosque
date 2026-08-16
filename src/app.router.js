@@ -5,7 +5,13 @@ import nextFridayRouter from './Modules/nextFriday/nextFriday.router.js'
 import eventRouter from './Modules/event/event.router.js'
 import contributionRouter from './Modules/contribution/contribution.router.js'
 import courseRouter from './Modules/course/course.router.js'
-// import postRouter from './Modules/Posts/Posts.router.js'
+import enrollmentRouter from './Modules/enrollment/router.enrollment.js'
+import facilityRouter from './Modules/mosque-facility-rent/router.facility.js'
+import postRouter from './Modules/Posts/Posts.router.js'
+import marksRouter from './Modules/course/marks/marks.router.js'
+import coursePostRouter from './Modules/course/post/post.router.js'
+import successStoryRouter from './Modules/successStory/success.router.js'
+import ourTeacherRouter from './Modules/ourTeacher/teacher.router.js'
 import cors from 'cors'
 
 const initApp = (app, express, next) => {
@@ -25,7 +31,15 @@ const initApp = (app, express, next) => {
   app.use("/event", eventRouter)
   app.use("/contribution", contributionRouter)
   app.use("/course", courseRouter)
-  // app.use("/posts", postRouter)
+  app.use("/enrollment", enrollmentRouter)
+  app.use("/facility-rent", facilityRouter)
+  app.use("/posts", postRouter)
+  app.use("/marks", marksRouter)
+  app.use("/course-post", coursePostRouter)
+  app.use("/success-story", successStoryRouter)
+  app.use("/success-stories", successStoryRouter)
+  app.use("/our-teacher", ourTeacherRouter)
+  app.use("/our-teachers", ourTeacherRouter)
 
 
 

@@ -1,6 +1,7 @@
 import { asyncHandler } from "../../../Services/ErrorHandler.services.js";
 import Course from "../../../../database/Models/course.model.js";
 import User from "../../../../database/Models/user.model.js";
+import Student from "../../../../database/Models/student.model.js";
 
 
 // ─── CREATE ───────────────────────────────────────────────────────────────────
@@ -266,6 +267,31 @@ export const deleteCourse = asyncHandler(async (req, res, next) => {
   });
 });
 
+// ─── RESTORE (soft delete reversal) ──────────────────────────────────────────
+
+/**
+ * PATCH /course/restore/:id
+ * Roles: admin, teacher
+ * Restores a soft-deleted course by setting softDelete = false.
+ */
+export const restoreCourse = asyncHandler(async (req, res, next) => {
+  const { id } = req.params;
+
+  const course = await Course.findOne({ _id: id, softDelete: true });
+
+  if (!course) {
+    return res.status(404).json({ success: false, message: "Soft-deleted course not found" });
+  }
+
+  await Course.findByIdAndUpdate(id, { softDelete: false });
+
+  return res.status(200).json({
+    success: true,
+    message: "Course restored successfully",
+  });
+});
+
+
 // ─── CHANGE STATUS ────────────────────────────────────────────────────────────
 
 /**
@@ -348,3 +374,74 @@ export const changeEnrollmentStatus = asyncHandler(async (req, res, next) => {
     },
   });
 });
+
+// ─── TEACHER & STUDENT SPECIFIC COURSES ───────────────────────────────────────
+
+/**
+ * GET /course/teacher/courses/:teacherId
+ * Fetch all courses taught by a specific teacher.
+ */
+export const getTeacherCourses = asyncHandler(async (req, res, next) => {
+  const { teacherId } = req.params;
+
+  const teacher = await User.findById(teacherId).select("userName email role");
+  if (!teacher) {
+    return res.status(404).json({ success: false, message: "Teacher not found" });
+  }
+
+  const courses = await Course.find({ teacherId, softDelete: false })
+    .populate("teacherId", "userName email role")
+    .sort("-createdAt");
+
+  return res.status(200).json({
+    success: true,
+    count: courses.length,
+    data: courses,
+  });
+});
+
+/**
+ * GET /course/teacher/course/:courseId
+ * Fetch a specific course for a teacher.
+ */
+export const getTeacherCourseById = asyncHandler(async (req, res, next) => {
+  const { courseId } = req.params;
+
+  const course = await Course.findOne({ _id: courseId, softDelete: false })
+    .populate("teacherId", "userName email role");
+
+  if (!course) {
+    return res.status(404).json({ success: false, message: "Course not found" });
+  }
+
+  return res.status(200).json({
+    success: true,
+    data: course,
+  });
+});
+
+/**
+ * GET /course/students/:courseId
+ * Protected (admin & teacher). Get all students enrolled in a specific course.
+ */
+export const getStudentsInCourse = asyncHandler(async (req, res, next) => {
+  const { courseId } = req.params;
+
+  const course = await Course.findOne({ _id: courseId, softDelete: false });
+  if (!course) {
+    return res.status(404).json({ success: false, message: "Course not found" });
+  }
+
+  // Find enrolled students in studentModel
+  const students = await Student.find({
+    coursesEnrolled: { $in: [courseId, courseId.toString()] },
+  }).populate("userId", "userName email phone gender");
+
+  return res.status(200).json({
+    success: true,
+    courseName: course.name,
+    count: students.length,
+    data: students,
+  });
+});
+

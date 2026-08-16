@@ -145,8 +145,16 @@ const courseSchema = new Schema(
       type: Boolean,
       default: false,
     },
+    createdBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+    },
+    updatedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+    },
   },
-  {
+  { 
   timestamps: true,
     toJSON: { virtuals: true },
     toObject: { virtuals: true },  }
