@@ -22,10 +22,32 @@ const userSchema = new Schema({
   changePasswordTime: {
     type: Date,
   },
+
   forgetPassword: {
     type: String,
     default: "",
+    select: false,
   } ,
+  forgetPasswordHash: {
+    type: String,
+    default: "",
+    select: false,
+  },
+  forgetPasswordExpiresAt: {
+    type: Date,
+    default: null,
+    select: false,
+  },
+  forgetPasswordAttempts: {
+    type: Number,
+    default: 0,
+    select: false,
+  },
+  forgetPasswordRequestedAt: {
+    type: Date,
+    default: null,
+    select: false,
+  },
   confirmEmail: {
     type: Boolean,
     default: false,
@@ -52,19 +74,9 @@ const userSchema = new Schema({
     type: String,
     default: null,
   },
-  // Lightweight brute-force protection
-  failedLoginAttempts: {
-    type: Number,
-    default: 0,
-  },
   lockUntil: {
     type: Date,
     default: null,
-  },
-  points: {
-    type: Number,
-    default: 0,
-    min: 0,
   },
   deletedAt: {
     type: Date,

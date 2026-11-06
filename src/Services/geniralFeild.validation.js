@@ -82,12 +82,11 @@ export const geniralFeild = {
       "string.pattern.base": "Please provide a valid phone number",
     }),
 
-  // All roles known to the system. Public signup is limited to user|student
-  // (enforced in auth.validation.js). Admin endpoints can use any role.
+  // Known system roles, used for filtering and display validation. Role changes use invitations.
   role: joi.string()
-    .valid("admin", "teacher", "student", "user")
+    .valid("admin", "teacher", "student", "user", "superAdmin")
     .messages({
-      "any.only": "Role must be one of: admin, teacher, student, user",
+      "any.only": "Role must be one of: admin, teacher, student, user, superAdmin",
     }),
 
   gender: joi.string()
@@ -134,7 +133,5 @@ export const geniralFeild = {
     token: joi.string().required(),
    
    
-} 
- 
- 
+}
  

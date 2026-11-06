@@ -66,12 +66,6 @@ export const createMark = Joi.object({
       "string.max": "Feedback cannot exceed 2000 characters",
     }),
 
-  gradedBy: Joi.string()
-    .pattern(objectIdPattern)
-    .optional()
-    .messages({
-      "string.pattern.base": "Invalid gradedBy user ID format",
-    }),
 });
 
 // ─── UPDATE MARK ─────────────────────────────────────────────────────────────
@@ -82,20 +76,6 @@ export const updateMark = Joi.object({
     .messages({
       "string.pattern.base": "Invalid mark ID format",
       "any.required": "Mark ID is required",
-    }),
-
-  courseId: Joi.string()
-    .pattern(objectIdPattern)
-    .optional()
-    .messages({
-      "string.pattern.base": "Invalid course ID format",
-    }),
-
-  studentId: Joi.string()
-    .pattern(objectIdPattern)
-    .optional()
-    .messages({
-      "string.pattern.base": "Invalid student ID format",
     }),
 
   title: Joi.string().min(2).max(150).optional(),
@@ -112,14 +92,7 @@ export const updateMark = Joi.object({
   maxScore: Joi.number().min(0).optional(),
 
   feedback: Joi.string().allow("", null).max(2000).optional(),
-
-  gradedBy: Joi.string()
-    .pattern(objectIdPattern)
-    .optional()
-    .messages({
-      "string.pattern.base": "Invalid gradedBy user ID format",
-    }),
-});
+}).or("title", "type", "score", "maxScore", "feedback");
 
 // ─── GET MARKS (filters + pagination) ───────────────────────────────────────
 export const getMarks = Joi.object({
@@ -153,6 +126,18 @@ export const courseIdParam = Joi.object({
       "string.pattern.base": "Invalid course ID format",
       "any.required": "Course ID is required",
     }),
+});
+
+// Course marks are paginated too, so large courses do not return every record
+// in a single response. The route validator combines these query values with
+// the courseId path parameter.
+export const getMarksByCourse = Joi.object({
+  courseId: Joi.string().pattern(objectIdPattern).required().messages({
+    "string.pattern.base": "Invalid course ID format",
+    "any.required": "Course ID is required",
+  }),
+  page: Joi.number().integer().min(1).default(1).optional(),
+  limit: Joi.number().integer().min(1).max(100).default(10).optional(),
 });
 
 export const studentIdParam = Joi.object({

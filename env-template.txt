@@ -5,18 +5,24 @@ SIGNATURE=your_jwt_secret_key_here_make_it_long_and_secure_at_least_32_character
 CONFIRM_SIGNATURE=your_email_verification_secret_key_here_make_it_different_from_above_at_least_32_characters
 
 # Database
-DB_URL=mongodb://localhost:27017/your_database_name
+CONECTDBB=mongodb://localhost:27017/your_database_name
 
 # Email Configuration
-EMAIL_USER=your_email@gmail.com
-EMAIL_PASS=your_email_password_or_app_password
+email=your_email@gmail.com
+password=your_gmail_app_password
 
 # Server Configuration
 PORT=3000
 NODE_ENV=development
 
-# Frontend URL
-FRONTEND_URL=http://localhost:3000
+# Single PM2 instance: use memory for rate limits and MongoDB for logged-out sessions.
+# Set REDIS_URL to a shared redis:// or rediss:// URL to use Redis for both.
+REDIS_URL=
+
+# Public base URL of this backend. Confirmation emails link to this server.
+# Local development: http://localhost:3000
+# Production: use the deployed HTTPS API origin, for example https://api.example.com
+API_BASE_URL=http://localhost:3000
 
 # Bearer Token Key
 BEARER_KEY=Bearer_

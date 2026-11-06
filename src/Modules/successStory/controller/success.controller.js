@@ -1,6 +1,8 @@
 import { asyncHandler } from "../../../Services/ErrorHandler.services.js";
 import cloudinary from "../../../config/cloudinary.config.js";
 import SuccessStory from "../../../../database/Models/successStory.model.js";
+import User from "../../../../database/Models/user.model.js";
+import { sendEmail } from "../../../Services/SendEmail.services.js";
 import fs from "fs";
 
 // ─── CREATE SUCCESS STORY ───────────────────────────────────────────────────
@@ -60,6 +62,25 @@ export const createSuccessStory = asyncHandler(async (req, res, next) => {
     };
 
     const story = await SuccessStory.create(storyData);
+
+    // Send email notification asynchronously to all users/students
+    (async () => {
+      try {
+        const users = await User.find({ deletedAt: null, confirmEmail: true }).select("userName email");
+        const subject = `New Success Story: ${studentName}'s Achievement!`;
+
+        for (const u of users) {
+          if (u.email) {
+            const message = `<p>Hello <strong>${u.userName || "Valued Member"}</strong>,</p><p>A new success story has been published: <strong>${studentName}</strong> achieved <strong>${studentMark}</strong> in <strong>${courseName}</strong>! Check it out from our success stories.</p>`;
+            sendEmail(u.email, subject, message).catch((err) => {
+              console.error(`Error sending success story email to ${u.email}:`, err);
+            });
+          }
+        }
+      } catch (err) {
+        console.error("Failed to notify users for new success story:", err);
+      }
+    })();
 
     return res.status(201).json({
       success: true,

@@ -11,10 +11,6 @@ export const facilityIdParam = Joi.object({
 });
 
 export const createFacilityRent = Joi.object({
-  facilityId: Joi.string().pattern(objectIdPattern).required().messages({
-    "string.pattern.base": "Invalid facility ID format",
-    "any.required": "Facility ID is required",
-  }),
   renterName: Joi.string().min(3).max(100).required().messages({
     "string.empty": "Renter name is required",
     "any.required": "Renter name is required",
@@ -36,30 +32,29 @@ export const createFacilityRent = Joi.object({
     "date.greater": "End date must be after start date",
     "any.required": "End date is required",
   }),
-  totalPrice: Joi.number().min(0).required().messages({
-    "number.min": "Total price cannot be negative",
-    "any.required": "Total price is required",
-  }),
-  extraCharge: Joi.number().min(0).default(0).optional(),
 });
 
 export const updateFacilityRent = Joi.object({
   id: Joi.string().pattern(objectIdPattern).required().messages({
     "string.pattern.base": "Invalid facility rent ID format",
   }),
-  facilityId: Joi.string().pattern(objectIdPattern).optional(),
   renterName: Joi.string().min(3).max(100).optional(),
   renterPhone: Joi.string().optional(),
   eventType: Joi.string().min(2).max(100).optional(),
   startDate: Joi.date().optional(),
-  endDate: Joi.date().optional().when("startDate", {
-    is: Joi.date().exist(),
-    then: Joi.date().greater(Joi.ref("startDate")),
-  }),
-  totalPrice: Joi.number().min(0).optional(),
+  endDate: Joi.date().optional(),
   extraCharge: Joi.number().min(0).optional(),
   paid: Joi.boolean().optional(),
-});
+}).custom((value, helpers) => {
+  if (
+    value.startDate !== undefined &&
+    value.endDate !== undefined &&
+    value.endDate <= value.startDate
+  ) {
+    return helpers.error("date.range");
+  }
+  return value;
+}).messages({ "date.range": "End date must be after start date" });
 
 export const changeStatus = Joi.object({
   id: Joi.string().pattern(objectIdPattern).required().messages({
@@ -73,10 +68,6 @@ export const changeStatus = Joi.object({
 });
 
 export const checkAvailability = Joi.object({
-  facilityId: Joi.string().pattern(objectIdPattern).required().messages({
-    "string.pattern.base": "Invalid facility ID format",
-    "any.required": "Facility ID is required",
-  }),
   startDate: Joi.date().required().messages({
     "date.base": "Start date must be a valid date",
     "any.required": "Start date is required",

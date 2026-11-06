@@ -7,8 +7,7 @@ import * as enrollmentController from "./controller/controller.enrollment.js";
 
 const router = new Router();
 
-const APPLICANT_ROLES = ["user", "student"];
-const ADMIN_TEACHER_ROLES = ["admin", "teacher"];
+const STAFF_ROLES = ["superAdmin", "admin", "teacher"];
 
 // ── Student / User ───────────────────────────────────────────
 router.post(
@@ -24,24 +23,18 @@ router.get(
   enrollmentController.getMyRegistrations
 );
 
-router.patch(
-  "/cancel/:registrationId",
-  authorization(["student"]),
-  validation(enrollmentValidation.registrationIdParam),
-  enrollmentController.cancelRegistration
-);
 
 // ── Teacher & Admin ──────────────────────────────────────────
 router.get(
   "/course/:courseId",
-  authorization(["admin", "teacher"]),
+  authorization(STAFF_ROLES),
   validation(enrollmentValidation.courseIdParam),
   enrollmentController.getCourseRegistrations
 );
 
 router.patch(
   "/evaluate/:registrationId",
-  authorization(["admin", "teacher"]),
+  authorization(STAFF_ROLES),
   validation(enrollmentValidation.evaluateRegistration),
   enrollmentController.evaluateRegistration
 );

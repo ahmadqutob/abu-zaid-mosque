@@ -1,5 +1,5 @@
 import { Router } from "express";
-import authorization from "../../Middleware/authorization.middleware.js";
+import authorization, { optionalAuthorization } from "../../Middleware/authorization.middleware.js";
 import validation from "../../Middleware/validation.middleware.js";
 import * as courseValidation from "./course.validation.js";
 import * as courseController from "./Controller/course.controller.js";
@@ -7,6 +7,7 @@ import marksRouter from "./marks/marks.router.js";
 import postRouter from "./post/post.router.js";
 
 const router = new Router();
+const COURSE_STAFF_ROLES = ["superAdmin", "admin", "teacher"];
 
 // ─── Sub-routers ──────────────────────────────────────────────────────────────
 router.use("/marks", marksRouter);
@@ -18,6 +19,7 @@ router.use("/posts", postRouter);
 // GET /course/all  — list with filters, search & pagination
 router.get(
   "/all",
+  optionalAuthorization(),
   validation(courseValidation.getCourses),
   courseController.getAllCourses
 );
@@ -25,6 +27,7 @@ router.get(
 // GET /course/:id  — fetch one by MongoDB ObjectId
 router.get(
   "/:id",
+  optionalAuthorization(),
   validation(courseValidation.courseId),
   courseController.getCourseById
 );
@@ -33,7 +36,7 @@ router.get(
 // get courses by teacher id
 router.get(
   "/teacher/courses/:teacherId",
-  authorization(["admin", "teacher","student","user"]),
+  authorization(["superAdmin", "admin", "teacher", "student", "user"]),
   validation(courseValidation.teacherIdParam),
   courseController.getTeacherCourses
 );
@@ -41,7 +44,7 @@ router.get(
 // get specific course for teacher
 router.get(
   "/teacher/course/:courseId",
-  authorization(["admin", "teacher","student","user"]),
+  authorization(["superAdmin", "admin", "teacher", "student", "user"]),
   validation(courseValidation.courseIdParam),
   courseController.getTeacherCourseById
 );
@@ -51,7 +54,7 @@ router.get(
 // get student has course registration
 router.get(
   "/students/:courseId",
-  authorization(["admin", "teacher"]),
+  authorization(COURSE_STAFF_ROLES),
   validation(courseValidation.courseIdParam),
   courseController.getStudentsInCourse
 );
@@ -61,7 +64,7 @@ router.get(
 // POST /course/create
 router.post(
   "/create",
-  authorization(["admin", "teacher"]),
+  authorization(COURSE_STAFF_ROLES),
   validation(courseValidation.createCourse),
   courseController.createCourse
 );
@@ -69,7 +72,7 @@ router.post(
 // PUT /course/update/:id  — full / partial update
 router.put(
   "/update/:id",
-  authorization(["admin", "teacher"]),
+  authorization(COURSE_STAFF_ROLES),
   validation(courseValidation.updateCourse),
   courseController.updateCourse
 );
@@ -77,7 +80,7 @@ router.put(
 // PATCH /course/:id/status  — change lifecycle status only
 router.patch(
   "/:id/status",
-  authorization(["admin", "teacher"]),
+  authorization(COURSE_STAFF_ROLES),
   validation(courseValidation.changeCourseStatus),
   courseController.changeCourseStatus
 );
@@ -85,7 +88,7 @@ router.patch(
 // PATCH /course/:id/enrollment-status  — change enrollment status only
 router.patch(
   "/:id/enrollment-status",
-  authorization(["admin", "teacher"]),
+  authorization(COURSE_STAFF_ROLES),
   validation(courseValidation.changeEnrollmentStatus),
   courseController.changeEnrollmentStatus
 );
@@ -93,7 +96,7 @@ router.patch(
 // DELETE /course/delete/:id  — soft delete
 router.delete(
   "/delete/:id",
-  authorization(["admin", "teacher"]),
+  authorization(COURSE_STAFF_ROLES),
   validation(courseValidation.courseId),
   courseController.deleteCourse
 );
@@ -101,7 +104,7 @@ router.delete(
 // PATCH /course/restore/:id  — restore soft-deleted course
 router.patch(
   "/restore/:id",
-  authorization(["admin", "teacher"]),
+  authorization(COURSE_STAFF_ROLES),
   validation(courseValidation.courseId),
   courseController.restoreCourse
 );

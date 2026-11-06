@@ -3,78 +3,68 @@ import teacherModel from "../../../../database/Models/teacher.model.js";
 import auditLogModel from "../../../../database/Models/auditLog.model.js";
 import jwt from "jsonwebtoken";
 import { asyncHandler } from "../../../Services/ErrorHandler.services.js";
-import { compare, hash } from "bcrypt";
+import { compare } from "bcrypt";
 import bcrypt from "bcrypt";
 import { sendEmail } from "../../../Services/SendEmail.services.js";
-import { customAlphabet } from "nanoid";
+import { revokeToken } from "../../../Services/tokenBlacklist.services.js";
 import crypto from "crypto";
 
 
 // #region one for signin function 
 
 
-const MAX_FAILED_ATTEMPTS = 5;
-const LOCK_MINUTES = 15;
+const RESET_CODE_TTL_MINUTES = 10;
+const MAX_RESET_CODE_ATTEMPTS = 5;
+const INVALID_CREDENTIALS_MESSAGE = "Invalid email or password";
+
+const hashResetCode = (code) => {
+  const secret = process.env.RESET_CODE_SECRET || process.env.SIGNATURE;
+  if (!secret) throw new Error("RESET_CODE_SECRET or SIGNATURE must be configured");
+  return crypto.createHmac("sha256", secret).update(code).digest("hex");
+};
+
+const hashesMatch = (storedHash, candidateHash) => {
+  if (typeof storedHash !== "string" || !/^[a-f0-9]{64}$/i.test(storedHash)) return false;
+  return crypto.timingSafeEqual(Buffer.from(storedHash, "hex"), Buffer.from(candidateHash, "hex"));
+};
+
+const createConfirmationUrl = (emailToken) => {
+  const apiBaseUrl = process.env.API_BASE_URL ||
+    (process.env.NODE_ENV === "production" ? null : "http://localhost:3000");
+  if (!apiBaseUrl) throw new Error("API_BASE_URL must be configured to send verification emails");
+  const parsedApiUrl = new URL(apiBaseUrl);
+  const allowedProtocols = process.env.NODE_ENV === "production" ? ["https:"] : ["http:", "https:"];
+  if (!allowedProtocols.includes(parsedApiUrl.protocol)) throw new Error("API_BASE_URL must use HTTPS in production");
+  return new URL(`/auth/confirmEmail/${encodeURIComponent(emailToken)}`, parsedApiUrl).toString();
+};
 
 export const signin = asyncHandler(async (req, res, next) => {
   const { email, password } = req.body;
   const normalizedEmail = typeof email === "string" ? email.trim().toLowerCase() : email;
   const user = await userModel.findOne({ email: normalizedEmail, deletedAt: null });
 
-  if (!user) {
-    return next(new Error(
-      `No account is registered with the email "${normalizedEmail}". Please sign up first or check the email for typos.`,
-      { cause: 404 }
-    ));
-  }
-
-  // // Account lockout check
-  // if (user.lockUntil && user.lockUntil > new Date()) {
-  //   const minutesLeft = Math.ceil((user.lockUntil - new Date()) / 60000);
-  //   return next(new Error(
-  //     `This account is temporarily locked after ${MAX_FAILED_ATTEMPTS} failed login attempts. Please try again in ${minutesLeft} minute(s) or reset your password via /auth/sendCode.`,
-  //     { cause: 423 }
-  //   ));
-  // }
-
-  if (!user.confirmEmail) {
-    return next(new Error(
-      "Your email address has not been verified yet. Please open the verification link we sent to your inbox before signing in.",
-      { cause: 403 }
-    ));
+  if (!user || !user.confirmEmail) {
+    return next(new Error("Email not verified", { cause: 401 }));
   }
 
   const storedLooksLikeBcrypt = typeof user.password === "string" && /^\$2[aby]\$/.test(user.password);
   if (!storedLooksLikeBcrypt) {
-    return next(new Error(
-      "This account's password is not stored correctly (missing or invalid hash). Please reset your password using /auth/sendCode and /auth/forgotPassword.",
-      { cause: 500 }
-    ));
+    console.error("Authentication refused an account with an invalid password hash", { userId: user._id });
+    return next(new Error(INVALID_CREDENTIALS_MESSAGE, { cause: 401 }));
   }
 
   const match = await compare(password, user.password);
 
   if (!match) {
-    user.failedLoginAttempts = (user.failedLoginAttempts || 0) + 1;
-    const attemptsLeft = Math.max(0, MAX_FAILED_ATTEMPTS - user.failedLoginAttempts);
-    if (user.failedLoginAttempts >= MAX_FAILED_ATTEMPTS) {
-      user.lockUntil = new Date(Date.now() + LOCK_MINUTES * 60 * 1000);
-      user.failedLoginAttempts = 0;
-    }
-    await user.save();
-    const message = attemptsLeft > 0
-      ? `Incorrect password for "${normalizedEmail}". You have ${attemptsLeft} attempt(s) left before this account is locked for ${LOCK_MINUTES} minutes.`
-      : `Incorrect password. This account has now been locked for ${LOCK_MINUTES} minutes. You can reset your password via /auth/sendCode.`;
-    return next(new Error(message, { cause: 401 }));
+    return next(new Error(INVALID_CREDENTIALS_MESSAGE, { cause: 401 }));
   }
 
-  user.failedLoginAttempts = 0;
   user.lockUntil = null;
   await user.save();
   const token = jwt.sign(
     { id: user._id, role: user.role },
     process.env.SIGNATURE,
-    { expiresIn: "12h" }
+    { expiresIn: "12h", jwtid: crypto.randomUUID() }
   );
   return res.json({
     success: true,
@@ -85,8 +75,9 @@ export const signin = asyncHandler(async (req, res, next) => {
 });
 // #endregion
 // Internal helper used by both public signup and admin user creation.
-const createUserAndSendVerification = async ({ userName, password, email, phone, gender, role, req }) => {
-  const existingUser = await userModel.findOne({ email });
+const createUserAndSendVerification = async ({ userName, password, email, phone, gender, role }) => {
+  const normalizedEmail = email.trim().toLowerCase();
+  const existingUser = await userModel.findOne({ email: normalizedEmail });
   if (existingUser) {
     return { ok: false, status: 400, message: "Email already registered" };
   }
@@ -94,15 +85,22 @@ const createUserAndSendVerification = async ({ userName, password, email, phone,
   const hashPassword = await bcrypt.hash(password, 12); // stronger cost factor
   const tokenId = crypto.randomUUID();
   const emailToken = jwt.sign(
-    { email, tokenId },
+    { email: normalizedEmail, tokenId },
     process.env.CONFIRM_SIGNATURE,
     { expiresIn: "50h" }
   );
 
+  let confirmationUrl;
+  try {
+    confirmationUrl = createConfirmationUrl(emailToken);
+  } catch {
+    return { ok: false, status: 500, message: "API_BASE_URL must be a valid HTTP URL (HTTPS in production)" };
+  }
+
   const newUser = await userModel.create({
     userName,
     password: hashPassword,
-    email,
+    email: normalizedEmail,
     phone,
     role,
     gender,
@@ -112,14 +110,13 @@ const createUserAndSendVerification = async ({ userName, password, email, phone,
   });
 
   const mosqueName = process.env.MOSQUE_NAME || "Abuzaid Mosque";
-  const linkToConfirmEmail = `${req.protocol}://${req.headers.host}/auth/confirmEmail/${emailToken}`;
   const emailHtml = `
 <h1>Welcome to ${mosqueName}</h1>
 <p>Please verify your email by clicking the link below:</p>
-<a href="${linkToConfirmEmail}" target="_blank">Verify Email</a>
+<a href="${confirmationUrl}" target="_blank" rel="noopener noreferrer">Verify Email</a>
 `;
 
-  const emailSent = await sendEmail(email, `Confirm your email - ${mosqueName}`, emailHtml);
+  const emailSent = await sendEmail(normalizedEmail, `Confirm your email - ${mosqueName}`, emailHtml);
   if (!emailSent || !emailSent.success) {
     await userModel.deleteOne({ _id: newUser._id });
     return { ok: false, status: 500, message: "Failed to send email. Please try again." };
@@ -132,7 +129,7 @@ const createUserAndSendVerification = async ({ userName, password, email, phone,
 export const signup = asyncHandler(async (req, res, next) => {
   const { userName, password, email, phone, gender } = req.body;
   const result = await createUserAndSendVerification({
-    userName, password, email, phone, gender, role: "user", req,
+    userName, password, email, phone, gender, role: "user",
   });
   if (!result.ok) {
     return res.status(result.status).json({ message: result.message });
@@ -143,90 +140,7 @@ export const signup = asyncHandler(async (req, res, next) => {
   });
 });
 
-// Admin-only: create any role.
-export const adminCreateUser = asyncHandler(async (req, res, next) => {
-  const { userName, password, email, phone, gender, role } = req.body;
-  console.log(req.body);
-  const result = await createUserAndSendVerification({
-    userName, password, email, phone, gender, role, req,
-  });
-  if (!result.ok) {
-    return res.status(result.status).json({ message: result.message });
-  }
-  return res.status(201).json({
-    message: `User created with role: ${role}. Verification email sent.`,
-    userId: result.user._id,
-  });
-});
 
-export const adminCreateTeacher = asyncHandler(async (req, res, next) => {
-  const {
-    userName,
-    password,
-    email,
-    phone,
-    gender = "male",
-    bio,
-    specialization,
-    specializations,
-    qualification,
-    qualifications,
-    experienceYears,
-    yearsExperience,
-  } = req.body;
-   // Check if email already exists in userModel
-  const existingUser = await userModel.findOne({ email: email.toLowerCase() });
-  if (existingUser) {
-    return res.status(400).json({ message: "Email already registered" });
-  }
-
-  // Hash password
-  const hashedPassword = await bcrypt.hash(password, 12);
-
-  // Create User record with teacher role
-  const newUser = await userModel.create({
-    userName,
-    password: hashedPassword,
-    email: email.toLowerCase(),
-    phone,
-    gender,
-    role: "teacher",
-    confirmEmail: true, // Admin-created teachers are auto-verified
-  });
-
-  // Map values from request to match database schema format
-  const dbSpecialization = (specializations && Array.isArray(specializations))
-    ? specializations.join(", ")
-    : (specialization || "");
-
-  const dbQualification = (qualifications && Array.isArray(qualifications))
-    ? qualifications.join(", ")
-    : (qualification || "");
-
-  const dbExperienceYears = yearsExperience !== undefined ? yearsExperience : (experienceYears || 0);
-
-  // Create Teacher record with userId reference
-  const teacher = await teacherModel.create({
-    userId: newUser._id,
-    bio,
-    specialization: dbSpecialization,
-    qualification: dbQualification,
-    experienceYears: dbExperienceYears,
-  });
-  console.log("Teacher created:", teacher);
-  console.log(dbSpecialization, dbQualification, dbExperienceYears);
-
-  return res.status(201).json({
-    message: "Teacher created successfully",
-    teacherId: teacher._id,
-    userId: newUser._id,
-    createdBy: req.user._id,
-    data: {
-      teacher,
-      user: { email: newUser.email, userName: newUser.userName },
-    },
-  });
-});
 
 export const adminListTeachers = asyncHandler(async (req, res, next) => {
   const { page = 1, limit = 20, search = "" } = req.query || {};
@@ -342,15 +256,10 @@ export const adminUpdateUser = asyncHandler(async (req, res, next) => {
   const target = await userModel.findById(id);
   if (!target) return next(new Error("User not found", { cause: 404 }));
 
-  const allowed = ["userName", "email", "phone", "gender", "role", "confirmEmail"];
+  const allowed = ["userName", "email", "phone", "gender", "confirmEmail"];
   const updates = {};
   for (const key of allowed) {
     if (req.body[key] !== undefined) updates[key] = req.body[key];
-  }
-
-  // Safety: prevent an admin from demoting themselves
-  if (String(target._id) === String(req.user._id) && updates.role && updates.role !== "admin") {
-    return next(new Error("You cannot change your own role", { cause: 400 }));
   }
 
   const updated = await userModel.findByIdAndUpdate(id, updates, { new: true, runValidators: true })
@@ -413,12 +322,13 @@ export const confairmEmails = asyncHandler(async (req, res, next) => {
   const { token } = req.params;
 
   const decoded = await jwt.verify(token, process.env.CONFIRM_SIGNATURE);
-  const checkuser = await userModel.findOne({ email: decoded.email });
+  const checkuser = await userModel.findOne({ email: decoded.email, deletedAt: null });
   // Validate token payload
   if (
     !decoded ||
     !decoded.email ||
     typeof decoded.email !== "string" ||
+    !checkuser ||
     checkuser.verificationTokenId !== decoded.tokenId
   ) {
     return next(new Error(" Invalid token payload ", { cause: 400 }));
@@ -429,87 +339,121 @@ export const confairmEmails = asyncHandler(async (req, res, next) => {
     return next(new Error("Token expired", { cause: 401 }));
   }
   const user = await userModel.updateOne(
-    { email: decoded.email },
-    { confirmEmail: true, tokenId: null } // remove tokenId so it can't be reused
+    { email: decoded.email, verificationTokenId: decoded.tokenId, deletedAt: null },
+    { $set: { confirmEmail: true, verificationTokenId: null } }
   );
 
   return res.status(200).json({ message: "Email confirmed" });
-  // return res.status(200).redirect(`${process.env.FRONTEND_URL}`); //login page url
 });
 
 
 
 export const sendCode = asyncHandler(async (req, res, next) => {
-  const { email } = req.body;
+  const normalizedEmail = req.body.email.trim().toLowerCase();
+  const genericResponse = {
+    message: "Request received. Any reset code issued expires in 10 minutes.",
+  };
+  const user = await userModel.findOne({
+    email: normalizedEmail,
+    confirmEmail: true,
+    deletedAt: null,
+  });
+  if (!user) return res.status(202).json(genericResponse);
 
-  const user = await userModel.findOne({ email });
-  // // console.log("User found:", user);
+  const code = crypto.randomInt(0, 100_000_000).toString().padStart(8, "0");
+  console.log(code);
+  const codeHash = hashResetCode(code);
+  const requestedAt = new Date();
+  const expiresAt = new Date(requestedAt.getTime() + RESET_CODE_TTL_MINUTES * 60 * 1000);
+  const requestAllowedBefore = new Date(requestedAt.getTime() - 60 * 1000);
+  const updatedUser = await userModel.findOneAndUpdate(
+    {
+      _id: user._id,
+      confirmEmail: true,
+      deletedAt: null,
+      $or: [
+        { forgetPasswordRequestedAt: null },
+        { forgetPasswordRequestedAt: { $lte: requestAllowedBefore } },
+      ],
+    },
+    { $set: {
+      forgetPassword: "",
+      forgetPasswordHash: codeHash,
+      forgetPasswordExpiresAt: expiresAt,
+      forgetPasswordAttempts: 0,
+      forgetPasswordRequestedAt: requestedAt,
+    } },
+    { new: true }
+  ).select("_id");
+  if (!updatedUser) return res.status(202).json(genericResponse);
 
-  if (!user) {
-    return next(new Error("Email does not exist"));
-  }
-  if (!user.confirmEmail) {
-    return next(new Error("Please verify your email"));
-  }
-
-  // Initialize the customAlphabet generator
-  const generateCode = customAlphabet("012ahm6789", 6);
-  const code = generateCode();
-
-  try {
-    // Send email first
-    await sendEmail(
-      email,
-      "Your verification code",
-      `Your verification code is ${code}`
+  const emailResult = await sendEmail(
+    normalizedEmail,
+    "Your password reset code",
+    `<p>Your password reset code is <strong>${code}</strong>.</p><p>It expires in ${RESET_CODE_TTL_MINUTES} minutes and can only be used once.</p>`
+  );
+  if (!emailResult?.success) {
+    await userModel.updateOne(
+      { _id: user._id, forgetPasswordHash: codeHash },
+      { $set: { forgetPasswordHash: "", forgetPasswordExpiresAt: null, forgetPasswordAttempts: 0 } }
     );
-
-    // Then update the database
-    const updatedUser = await userModel.findOneAndUpdate(
-      { email },
-      { $set: { forgetPassword: code } },
-      { new: true }
-    );
-
-    if (!updatedUser) {
-      return next(new Error("Failed to update user"));
-    }
-
-    return res
-      .status(200)
-      .json({ message: "Code sent successfully", updatedUser });
-  } catch (error) {
-    return next(new Error("Failed to process request: " + error.message));
+    console.error("Password reset email delivery failed", { userId: user._id });
   }
+
+  return res.status(202).json(genericResponse);
 });
 
 export const forgotPassword = asyncHandler(async (req, res, next) => {
-  const { code, email, NEWpassword } = req.body;
-  const user = await userModel.findOne({ email });
-
+  const { code, NEWpassword } = req.body;
+  const email = req.body.email.trim().toLowerCase();
+  const user = await userModel.findOne({ email, confirmEmail: true, deletedAt: null }).select("_id");
   if (!user) {
-    return next(new Error("User not found"));
+    return next(new Error("Invalid or expired reset code", { cause: 400 }));
   }
 
-  if (user.forgetPassword != code || !code) {
-    return next(new Error("code is incorrect"));
+  const now = new Date();
+  const resetRecord = await userModel.findOneAndUpdate(
+    {
+      _id: user._id,
+      confirmEmail: true,
+      deletedAt: null,
+      forgetPasswordExpiresAt: { $gt: now },
+      forgetPasswordAttempts: { $lt: MAX_RESET_CODE_ATTEMPTS },
+    },
+    { $inc: { forgetPasswordAttempts: 1 } },
+    { new: true }
+  ).select("+forgetPasswordHash");
+  if (!resetRecord || !hashesMatch(resetRecord.forgetPasswordHash, hashResetCode(code))) {
+    return next(new Error("Invalid or expired reset code", { cause: 400 }));
   }
 
-  const hashPass = await bcrypt.hash(NEWpassword, 12);
-  user.password = hashPass;
-  user.forgetPassword = null;
-  user.changePasswordTime = Date.now();
-  await user.save();
+  const hashedPassword = await bcrypt.hash(NEWpassword, 12);
+  const updatedUser = await userModel.findOneAndUpdate(
+    {
+      _id: user._id,
+      forgetPasswordHash: resetRecord.forgetPasswordHash,
+      forgetPasswordExpiresAt: { $gt: now },
+      deletedAt: null,
+    },
+    {
+      $set: {
+        password: hashedPassword,
+        forgetPassword: "",
+        forgetPasswordHash: "",
+        forgetPasswordExpiresAt: null,
+        forgetPasswordAttempts: 0,
+        changePasswordTime: now,
+      },
+    }
+  );
+  if (!updatedUser) {
+    return next(new Error("Invalid or expired reset code", { cause: 400 }));
+  }
   return res.json({ message: "Password updated successfully" });
 });
 
 export const logout = asyncHandler(async (req, res, next) => {
-  const authHeader = req.headers.authorization || "";
-  const token = authHeader.split(process.env.BEARER_KEY || "Bearer_")[1];
-
-  if (token) {
-    await revokeToken(token);
-  }
+  if (req.authToken) await revokeToken(req.authToken);
 
   res.setHeader("Authorization", "");
   return res.status(200).json({ success: true, message: "Logged out successfully" });
@@ -549,9 +493,9 @@ export const adminResetPassword = asyncHandler(async (req, res, next) => {
   const targetUser = await userModel.findOne({ _id: id, deletedAt: null });
   if (!targetUser) return next(new Error("User not found", { cause: 404 }));
 
-  // Only superAdmin can reset admin passwords
-  if (targetUser.role === "admin" && currentUser.role !== "superAdmin") {
-    return next(new Error("Only superAdmin can reset admin passwords", { cause: 403 }));
+  // Only a superAdmin can reset passwords for privileged accounts.
+  if (["admin", "superAdmin"].includes(targetUser.role) && currentUser.role !== "superAdmin") {
+    return next(new Error("Only superAdmin can reset privileged account passwords", { cause: 403 }));
   }
 
   // Hash and update the password
@@ -560,17 +504,16 @@ export const adminResetPassword = asyncHandler(async (req, res, next) => {
   targetUser.changePasswordTime = Date.now();
   await targetUser.save();
 
-  // Log the password reset to audit trail
-  // await auditLogModel.create({
-  //   action: "RESET_PASSWORD",
-  //   performedBy: currentUser._id,
-  //   performedByRole: currentUser.role,
-  //   targetUser: targetUser._id,
-  //   targetUserRole: targetUser.role,
-  //   targetUserEmail: targetUser.email,
-  //   targetUserName: targetUser.userName,
-  //   ipAddress,
-  // });
+  await auditLogModel.create({
+    action: "RESET_PASSWORD",
+    performedBy: currentUser._id,
+    performedByRole: currentUser.role,
+    targetUser: targetUser._id,
+    targetUserRole: targetUser.role,
+    targetUserEmail: targetUser.email,
+    targetUserName: targetUser.userName,
+    ipAddress,
+  });
 
   return res.status(200).json({
     success: true,

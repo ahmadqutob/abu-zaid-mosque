@@ -30,7 +30,7 @@ const coursePostSchema = new Schema(
     type: {
       type: String,
       enum: {
-        values: ["advice", "announcment", "announcement", "search"],
+        values: ["advice", "announcment",  "search"],
         message: "{VALUE} is not a valid post type",
       },
       default: "announcement",

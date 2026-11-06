@@ -5,13 +5,15 @@ import * as marksValidation from "./marks.validation.js";
 import * as marksController from "./controller/marks.controller.js";
 
 const router = Router({ mergeParams: true });
+const MARK_READ_ROLES = ["superAdmin", "admin", "teacher", "student"];
+const MARK_STAFF_ROLES = ["superAdmin", "admin", "teacher"];
 
 // ─── Protected Read Routes (admin, teacher, student, user) ───────────────────
 
 // GET /all - list with filters, pagination, search
 router.get(
   "/all",
-  authorization(["admin", "teacher", "student", "user"]),
+  authorization(MARK_READ_ROLES),
   validation(marksValidation.getMarks),
   marksController.getAllMarks
 );
@@ -19,15 +21,15 @@ router.get(
 // GET /course/:courseId - get marks for a specific course
 router.get(
   "/course/:courseId",
-  authorization(["admin", "teacher", "student", "user"]),
-  validation(marksValidation.courseIdParam),
+  authorization(MARK_READ_ROLES),
+  validation(marksValidation.getMarksByCourse),
   marksController.getMarksByCourse
 );
 
 // GET /student/:studentId - get marks for a specific student
 router.get(
   "/student/:studentId",
-  authorization(["admin", "teacher", "student", "user"]),
+  authorization(MARK_READ_ROLES),
   validation(marksValidation.studentIdParam),
   marksController.getMarksByStudent
 );
@@ -35,7 +37,7 @@ router.get(
 // GET /:id - fetch single mark details
 router.get(
   "/:id",
-  authorization(["admin", "teacher", "student", "user"]),
+  authorization(MARK_READ_ROLES),
   validation(marksValidation.markId),
   marksController.getMarkById
 );
@@ -45,7 +47,7 @@ router.get(
 // POST /create - record new mark
 router.post(
   "/create",
-  authorization(["admin", "teacher"]),
+  authorization(MARK_STAFF_ROLES),
   validation(marksValidation.createMark),
   marksController.createMark
 );
@@ -53,7 +55,7 @@ router.post(
 // PUT /update/:id - update existing mark
 router.put(
   "/update/:id",
-  authorization(["admin", "teacher"]),
+  authorization(MARK_STAFF_ROLES),
   validation(marksValidation.updateMark),
   marksController.updateMark
 );
@@ -61,7 +63,7 @@ router.put(
 // DELETE /delete/:id - soft delete mark
 router.delete(
   "/delete/:id",
-  authorization(["admin", "teacher"]),
+  authorization(MARK_STAFF_ROLES),
   validation(marksValidation.markId),
   marksController.deleteMark
 );

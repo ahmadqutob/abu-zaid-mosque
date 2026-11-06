@@ -3,8 +3,6 @@ import { geniralFeild } from "../../Services/geniralFeild.validation.js";
 
 
 // Public self-signup: visitor always becomes a "user".
-// Student role is granted later (via course enrollment / admin action).
-// Teacher and admin can only be created by an admin.
 export const signup = joi.object({
     userName: geniralFeild.userName,
     email: geniralFeild.email,
@@ -12,31 +10,6 @@ export const signup = joi.object({
     phone: geniralFeild.phone,
     gender: geniralFeild.gender,
 });
-
-// Admin-only: create any role on behalf of someone else.
-export const adminCreateUser = joi.object({
-    userName: geniralFeild.userName,
-    email: geniralFeild.email,
-    password: geniralFeild.password,
-    phone: geniralFeild.phone,
-    gender: geniralFeild.gender,
-    role: geniralFeild.role.required(),
-});
-
-export const adminCreateTeacher = joi.object({
-    userName: geniralFeild.userName,
-    email: geniralFeild.email,
-    password: geniralFeild.password,
-    phone: geniralFeild.phone,
-    gender: joi.string().valid("male", "female", "other").optional(),
-    bio: joi.string().max(500).optional(),
-    specialization: joi.string().allow("").max(200).optional(),
-    specializations: joi.array().items(joi.string().max(100)).optional(),
-    qualification: joi.string().allow("").max(200).optional(),
-    qualifications: joi.array().items(joi.string().max(200)).optional(),
-    experienceYears: joi.number().integer().min(0).optional(),
-    yearsExperience: joi.number().integer().min(0).optional(),
-}).required();
 
 export const adminListTeachers = joi.object({
     page: joi.number().integer().min(1).optional(),
@@ -53,14 +26,13 @@ export const adminListUsers = joi.object({
     sort: joi.string().valid("createdAt", "-createdAt", "userName", "-userName").optional(),
 });
 
-// Admin: update a user (any subset of fields, role can be changed)
+// Admin: update profile fields without changing account roles.
 export const adminUpdateUser = joi.object({
     id: joi.string().pattern(/^[0-9a-fA-F]{24}$/).required(),
     userName: joi.string().alphanum().max(20).optional(),
     email: joi.string().email({ minDomainSegments: 2, tlds: { allow: ["com", "net", "ps"] } }).optional(),
     phone: joi.string().pattern(/^[+]?[\d\s\-\(\)]{8,15}$/).optional(),
     gender: joi.string().valid("male", "female").optional(),
-    role: geniralFeild.role.optional(),
     confirmEmail: joi.boolean().optional(),
 });
 
@@ -99,7 +71,7 @@ export const token = joi
     email: geniralFeild.email,
     NEWpassword: geniralFeild.password,
     Cpassword: geniralFeild.password.valid(joi.ref("NEWpassword")),
-    code: joi.string().required(),
+    code: joi.string().pattern(/^\d{8}$/).required(),
   })
   .required();
 

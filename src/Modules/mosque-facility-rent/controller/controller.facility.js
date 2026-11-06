@@ -1,5 +1,77 @@
+import mongoose from "mongoose";
 import { asyncHandler } from "../../../Services/ErrorHandler.services.js";
 import Facility from "../../../../database/Models/facility.model.js";
+import FacilityScheduleLock from "../../../../database/Models/facilityScheduleLock.model.js";
+
+const BLOCKING_STATUSES = ["pending", "approved"];
+const HOURLY_RATE_USD = 20;
+// A single server-assigned resource key prevents clients from bypassing overlap checks.
+const SINGLE_FACILITY_ID = new mongoose.Types.ObjectId("000000000000000000000001");
+const ALLOWED_STATUS_TRANSITIONS = {
+  pending: ["approved", "rejected", "cancelled"],
+  approved: ["cancelled", "completed"],
+  rejected: [],
+  cancelled: [],
+  completed: [],
+};
+let scheduleLockIndexesReady;
+
+const overlapFilter = ({ start, end, excludeId }) => ({
+  status: { $in: BLOCKING_STATUSES },
+  ...(excludeId ? { _id: { $ne: excludeId } } : {}),
+  startDate: { $lt: end },
+  endDate: { $gt: start },
+});
+
+export const calculateRentPrice = (start, end) =>
+  Math.round((((end - start) / (60 * 60 * 1000)) * HOURLY_RATE_USD + Number.EPSILON) * 100) / 100;
+
+/**
+ * Serialize schedule changes for a facility across all API instances.
+ * The lock document write is held inside a MongoDB transaction, so concurrent
+ * transactions for the same facility conflict and retry before rechecking.
+ */
+const withFacilityScheduleLocks = async (facilityIds, callback) => {
+  const ids = [...new Set(facilityIds.map((id) => String(id)))].sort();
+  scheduleLockIndexesReady ??= FacilityScheduleLock.createIndexes();
+  await scheduleLockIndexesReady;
+
+  for (const facilityId of ids) {
+    try {
+      await FacilityScheduleLock.updateOne(
+        { facilityId },
+        { $setOnInsert: { facilityId, revision: 0 } },
+        { upsert: true }
+      );
+    } catch (error) {
+      // Another request may have created this unique lock document at once.
+      if (error.code !== 11000) throw error;
+    }
+  }
+
+  const session = await mongoose.startSession();
+  try {
+    let result;
+    await session.withTransaction(async () => {
+      for (const facilityId of ids) {
+        await FacilityScheduleLock.updateOne(
+          { facilityId },
+          { $inc: { revision: 1 } },
+          { session }
+        );
+      }
+      result = await callback(session, ids);
+    });
+    return result;
+  } finally {
+    await session.endSession();
+  }
+};
+
+const isActiveBookingConflict = ({ start, end, excludeId, session }) => {
+  const query = Facility.findOne(overlapFilter({ start, end, excludeId }));
+  return session ? query.session(session) : query;
+};
 
 // ─── 1. CREATE RENT REQUEST ───────────────────────────────────────────────────
 
@@ -8,43 +80,42 @@ import Facility from "../../../../database/Models/facility.model.js";
  * Creates a new facility rent request. Checks for schedule conflicts.
  */
 export const createFacilityRent = asyncHandler(async (req, res, next) => {
-  const { facilityId, renterName, renterPhone, eventType, startDate, endDate, totalPrice, extraCharge = 0 } = req.body;
+  const { renterName, renterPhone, eventType, startDate, endDate } = req.body;
 
   const start = new Date(startDate);
   const end = new Date(endDate);
 
-  // Check for date range conflict with active/pending bookings
-  const conflict = await Facility.findOne({
-    facilityId,
-    status: { $in: ["pending", "approved"] },
-    $or: [
-      { startDate: { $lt: end }, endDate: { $gt: start } },
-    ],
+  const result = await withFacilityScheduleLocks([SINGLE_FACILITY_ID], async (session) => {
+    const conflict = await isActiveBookingConflict({ start, end, session });
+    if (conflict) return { conflict: true };
+
+    const rentRequest = new Facility({
+      facilityId: SINGLE_FACILITY_ID,
+      renterName,
+      renterPhone,
+      eventType,
+      startDate: start,
+      endDate: end,
+      totalPrice: calculateRentPrice(start, end),
+      hourlyRate: HOURLY_RATE_USD,
+      extraCharge: 0,
+      status: "pending",
+    });
+    await rentRequest.save({ session });
+    return { rentRequest };
   });
 
-  if (conflict) {
-    return res.status(400).json({
+  if (result.conflict) {
+    return res.status(409).json({
       success: false,
       message: "Facility is already booked for the selected date range.",
     });
   }
 
-  const rentRequest = await Facility.create({
-    facilityId,
-    renterName,
-    renterPhone,
-    eventType,
-    startDate: start,
-    endDate: end,
-    totalPrice,
-    extraCharge,
-    status: "pending",
-  });
-
   return res.status(201).json({
     success: true,
     message: "Facility rent request created successfully",
-    data: rentRequest,
+    data: result.rentRequest,
   });
 });
 
@@ -129,51 +200,82 @@ export const getFacilityRentById = asyncHandler(async (req, res, next) => {
  */
 export const updateFacilityRent = asyncHandler(async (req, res, next) => {
   const { id } = req.params;
-  const updateData = { ...req.body };
+  const editableFields = ["renterName", "renterPhone", "eventType", "startDate", "endDate", "extraCharge", "paid"];
+  const updateData = Object.fromEntries(
+    editableFields
+      .filter((field) => req.body[field] !== undefined)
+      .map((field) => [field, req.body[field]])
+  );
 
-  const rent = await Facility.findById(id);
-  if (!rent) {
+  const existingRent = await Facility.findById(id).select("facilityId");
+  if (!existingRent) {
     return res.status(404).json({ success: false, message: "Facility rent request not found" });
   }
 
-  if (rent.status !== "pending") {
+  const result = await withFacilityScheduleLocks(
+    [SINGLE_FACILITY_ID],
+    async (session) => {
+      const rent = await Facility.findById(id).session(session);
+      if (!rent) return { notFound: true };
+
+      if (rent.status !== "pending") return { status: rent.status };
+
+      const start = new Date(updateData.startDate || rent.startDate);
+      const end = new Date(updateData.endDate || rent.endDate);
+      if (!(start < end)) return { invalidRange: true };
+
+      const scheduleChanged =
+        updateData.startDate !== undefined ||
+        updateData.endDate !== undefined;
+
+      if (scheduleChanged) {
+        const conflict = await isActiveBookingConflict({
+          start,
+          end,
+          excludeId: id,
+          session,
+        });
+        if (conflict) return { conflict: true };
+      }
+
+      Object.assign(rent, updateData, {
+        facilityId: SINGLE_FACILITY_ID,
+        hourlyRate: HOURLY_RATE_USD,
+        startDate: start,
+        endDate: end,
+        totalPrice: calculateRentPrice(start, end),
+      });
+      await rent.save({ session });
+      return { rent };
+    }
+  );
+
+  if (result.notFound) {
+    return res.status(404).json({ success: false, message: "Facility rent request not found" });
+  }
+  if (result.status) {
     return res.status(400).json({
       success: false,
-      message: `Cannot update rent details because request is already ${rent.status}`,
+      message: `Cannot update rent details because request is already ${result.status}`,
     });
   }
-
-  // If dates are being changed, re-verify availability
-  if (updateData.startDate || updateData.endDate) {
-    const start = new Date(updateData.startDate || rent.startDate);
-    const end = new Date(updateData.endDate || rent.endDate);
-
-    const conflict = await Facility.findOne({
-      _id: { $ne: id },
-      facilityId: updateData.facilityId || rent.facilityId,
-      status: { $in: ["pending", "approved"] },
-      $or: [
-        { startDate: { $lt: end }, endDate: { $gt: start } },
-      ],
+  if (result.invalidRange) {
+    return res.status(400).json({
+      success: false,
+      message: "End date must be after start date.",
     });
-
-    if (conflict) {
-      return res.status(400).json({
-        success: false,
-        message: "Facility is already booked for the updated date range.",
-      });
-    }
   }
-
-  const updatedRent = await Facility.findByIdAndUpdate(id, updateData, {
-    new: true,
-    runValidators: true,
-  });
+  if (result.conflict) {
+    return res.status(409).json({
+      success: false,
+      message: "Facility is already booked for the updated date range.",
+    });
+  }
 
   return res.status(200).json({
     success: true,
     message: "Rent details updated successfully",
-    data: updatedRent,
+    data: result.rent,
   });
 });
 
@@ -187,21 +289,60 @@ export const changeFacilityRentStatus = asyncHandler(async (req, res, next) => {
   const { id } = req.params;
   const { status, reviewerNote } = req.body;
 
-  const rent = await Facility.findById(id);
-  if (!rent) {
+  const existingRent = await Facility.findById(id).select("facilityId");
+  if (!existingRent) {
     return res.status(404).json({ success: false, message: "Facility rent request not found" });
   }
 
-  rent.status = status;
-  if (req.user?._id) rent.reviewerId = req.user._id;
-  if (reviewerNote !== undefined) rent.reviewerNote = reviewerNote;
+  const result = await withFacilityScheduleLocks([SINGLE_FACILITY_ID], async (session) => {
+    const rent = await Facility.findById(id).session(session);
+    if (!rent) return { notFound: true };
+    if (rent.status !== status && !ALLOWED_STATUS_TRANSITIONS[rent.status]?.includes(status)) {
+      return { invalidTransition: rent.status };
+    }
 
-  await rent.save();
+    if (BLOCKING_STATUSES.includes(status)) {
+      const conflict = await isActiveBookingConflict({
+        start: rent.startDate,
+        end: rent.endDate,
+        excludeId: rent._id,
+        session,
+      });
+      if (conflict) return { conflict: true };
+    }
+
+    if (status === "completed" && rent.endDate > new Date()) return { futureCompletion: true };
+
+    rent.status = status;
+    if (req.user?._id) rent.reviewerId = req.user._id;
+    if (reviewerNote !== undefined) rent.reviewerNote = reviewerNote;
+    await rent.save({ session });
+    return { rent };
+  });
+
+  if (result.notFound) {
+    return res.status(404).json({ success: false, message: "Facility rent request not found" });
+  }
+  if (result.invalidTransition) {
+    return res.status(400).json({
+      success: false,
+      message: `Cannot change rent status from "${result.invalidTransition}" to "${status}".`,
+    });
+  }
+  if (result.conflict) {
+    return res.status(409).json({
+      success: false,
+      message: "Cannot activate this rent because the facility is already booked for that date range.",
+    });
+  }
+  if (result.futureCompletion) {
+    return res.status(400).json({ success: false, message: "A rent cannot be completed before its end date." });
+  }
 
   return res.status(200).json({
     success: true,
     message: `Facility rent status updated to "${status}"`,
-    data: rent,
+    data: result.rent,
   });
 });
 
@@ -214,12 +355,21 @@ export const changeFacilityRentStatus = asyncHandler(async (req, res, next) => {
 export const deleteFacilityRent = asyncHandler(async (req, res, next) => {
   const { id } = req.params;
 
-  const rent = await Facility.findById(id);
-  if (!rent) {
+  const existingRent = await Facility.findById(id).select("facilityId");
+  if (!existingRent) {
     return res.status(404).json({ success: false, message: "Facility rent request not found" });
   }
 
-  await Facility.findByIdAndDelete(id);
+  const deleted = await withFacilityScheduleLocks([SINGLE_FACILITY_ID], async (session) => {
+    const rent = await Facility.findById(id).session(session);
+    if (!rent) return { notFound: true };
+    await rent.deleteOne({ session });
+    return { deleted: true };
+  });
+
+  if (deleted.notFound) {
+    return res.status(404).json({ success: false, message: "Facility rent request not found" });
+  }
 
   return res.status(200).json({
     success: true,
@@ -242,8 +392,9 @@ export const generateInvoice = asyncHandler(async (req, res, next) => {
   }
 
   const durationMs = new Date(rent.endDate) - new Date(rent.startDate);
-  const durationHours = Math.max(1, Math.round(durationMs / (1000 * 60 * 60)));
-  const grandTotal = (rent.totalPrice || 0) + (rent.extraCharge || 0);
+  const durationHours = Math.round((durationMs / (1000 * 60 * 60)) * 100) / 100;
+  const hourlyRate = rent.hourlyRate ?? HOURLY_RATE_USD;
+  const grandTotal = Math.round(((rent.totalPrice || 0) + (rent.extraCharge || 0) + Number.EPSILON) * 100) / 100;
 
   const invoice = {
     invoiceNumber: `INV-FAC-${rent._id.toString().slice(-6).toUpperCase()}`,
@@ -259,6 +410,7 @@ export const generateInvoice = asyncHandler(async (req, res, next) => {
       durationInHours: durationHours,
     },
     pricing: {
+      hourlyRate,
       basePrice: rent.totalPrice,
       extraCharge: rent.extraCharge || 0,
       grandTotal,
@@ -288,7 +440,7 @@ export const listFacilityPayments = asyncHandler(async (req, res, next) => {
     return res.status(404).json({ success: false, message: "Facility rent request not found" });
   }
 
-  const grandTotal = (rent.totalPrice || 0) + (rent.extraCharge || 0);
+  const grandTotal = Math.round(((rent.totalPrice || 0) + (rent.extraCharge || 0) + Number.EPSILON) * 100) / 100;
 
   const paymentSummary = {
     rentId: rent._id,
@@ -312,18 +464,13 @@ export const listFacilityPayments = asyncHandler(async (req, res, next) => {
  * Checks if a facility is available for a given start and end date range.
  */
 export const checkFacilityAvailability = asyncHandler(async (req, res, next) => {
-  const { facilityId, startDate, endDate } = req.query;
+  const { startDate, endDate } = req.query;
 
   const start = new Date(startDate);
   const end = new Date(endDate);
 
-  const conflictingBookings = await Facility.find({
-    facilityId,
-    status: { $in: ["pending", "approved"] },
-    $or: [
-      { startDate: { $lt: end }, endDate: { $gt: start } },
-    ],
-  }).select("renterName eventType startDate endDate status");
+  const conflictingBookings = await Facility.find(overlapFilter({ start, end }))
+    .select("startDate endDate status");
 
   const isAvailable = conflictingBookings.length === 0;
 
@@ -347,24 +494,38 @@ export const checkFacilityAvailability = asyncHandler(async (req, res, next) => 
 export const markRentCompleted = asyncHandler(async (req, res, next) => {
   const { id } = req.params;
 
-  const rent = await Facility.findById(id);
-  if (!rent) {
+  const existingRent = await Facility.findById(id).select("facilityId");
+  if (!existingRent) {
     return res.status(404).json({ success: false, message: "Facility rent request not found" });
   }
 
-  if (rent.status !== "approved") {
+  const result = await withFacilityScheduleLocks([SINGLE_FACILITY_ID], async (session) => {
+    const rent = await Facility.findById(id).session(session);
+    if (!rent) return { notFound: true };
+    if (rent.status !== "approved") return { invalidStatus: rent.status };
+    if (rent.endDate > new Date()) return { futureCompletion: true };
+
+    rent.status = "completed";
+    await rent.save({ session });
+    return { rent };
+  });
+
+  if (result.notFound) {
+    return res.status(404).json({ success: false, message: "Facility rent request not found" });
+  }
+  if (result.invalidStatus) {
     return res.status(400).json({
       success: false,
-      message: `Only approved rent requests can be marked completed. Current status is ${rent.status}.`,
+      message: `Only approved rent requests can be marked completed. Current status is ${result.invalidStatus}.`,
     });
   }
-
-  rent.status = "completed";
-  await rent.save();
+  if (result.futureCompletion) {
+    return res.status(400).json({ success: false, message: "A rent cannot be completed before its end date." });
+  }
 
   return res.status(200).json({
     success: true,
     message: "Rent request marked as completed.",
-    data: rent,
+    data: result.rent,
   });
 });

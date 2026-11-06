@@ -29,7 +29,8 @@ const registrationSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-// A student can only have ONE active (pending/approved) registration per course
+// A student may reapply after a rejected or cancelled application, but can only
+// have one pending or approved registration for the same course at a time.
 registrationSchema.index(
   { studentId: 1, courseId: 1 },
   {

@@ -1,0 +1,453 @@
+openapi: 3.0.3
+info:
+  title: Abuzaid Mosque Auth and Invitation API
+  version: 1.0.0
+  description: Authentication and account management endpoints under /auth, with role invitations in the separate /invitations module.
+servers:
+  - url: http://localhost:3000
+    description: Local development server (change the port if your backend uses a different one)
+tags:
+  - name: Authentication
+  - name: Invitations
+  - name: Account
+  - name: Admin
+security:
+  - bearerAuth: []
+paths:
+  /auth/signup:
+    post:
+      tags: [Authentication]
+      summary: Create a normal user account
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SignupRequest'
+      responses:
+        '201':
+          description: Account created; email confirmation is required
+        '400':
+          description: Invalid request or email already registered
+  /auth/signin:
+    post:
+      tags: [Authentication]
+      summary: Sign in and receive a bearer token
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SigninRequest'
+      responses:
+        '200':
+          description: Signed in
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SigninResponse'
+        '401':
+          description: Invalid credentials or unverified email
+  /auth/confirmEmail/{token}:
+    get:
+      tags: [Authentication]
+      summary: Confirm an email address using the emailed token
+      security: []
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Email confirmed
+        '400':
+          description: Invalid confirmation token
+        '401':
+          description: Expired token
+  /auth/sendCode:
+    post:
+      tags: [Authentication]
+      summary: Request a password reset code by email
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EmailRequest'
+      responses:
+        '202':
+          description: Request accepted; response does not reveal whether the account exists
+  /auth/forgotPassword:
+    post:
+      tags: [Authentication]
+      summary: Reset a password using the emailed code
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ForgotPasswordRequest'
+      responses:
+        '200':
+          description: Password updated
+        '400':
+          description: Invalid or expired code
+  /invitations/accept:
+    post:
+      tags: [Invitations]
+      summary: Accept a role invitation for the signed-in account
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token]
+              properties:
+                token:
+                  type: string
+                  pattern: '^[a-fA-F0-9]{64}$'
+                  example: 0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+      responses:
+        '200':
+          description: Invitation accepted; sign in again to refresh the role token
+        '400':
+          description: Invitation invalid, expired, or already used
+        '403':
+          description: Signed-in account does not match the invite recipient
+  /auth/me:
+    get:
+      tags: [Account]
+      summary: Get the signed-in user's profile
+      responses:
+        '200':
+          description: User profile
+  /auth/logout:
+    post:
+      tags: [Authentication]
+      summary: Revoke the current bearer token
+      responses:
+        '200':
+          description: Logged out
+  /auth/changePassword:
+    patch:
+      tags: [Account]
+      summary: Change the signed-in user's password
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [oldPassword, newPassword, CnewPassword]
+              properties:
+                oldPassword:
+                  type: string
+                  format: password
+                newPassword:
+                  type: string
+                  format: password
+                CnewPassword:
+                  type: string
+                  format: password
+      responses:
+        '200':
+          description: Password changed
+        '400':
+          description: Current password is incorrect or confirmation does not match
+  /invitations/admin:
+    post:
+      tags: [Invitations, Admin]
+      summary: Invite a verified user to become a teacher, admin, or superAdmin
+      description: Only a superAdmin may invite admin or superAdmin accounts. Admins may invite teachers.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, role]
+              properties:
+                email:
+                  type: string
+                  format: email
+                role:
+                  type: string
+                  enum: [teacher, admin, superAdmin]
+      responses:
+        '202':
+          description: Invitation email sent
+        '403':
+          description: Insufficient role to invite the requested role
+  /invitations/teacher:
+    post:
+      tags: [Invitations]
+      summary: Invite a verified user to become a student
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EmailRequest'
+      responses:
+        '202':
+          description: Invitation email sent
+        '403':
+          description: Teacher role required
+  /auth/admin/users:
+    get:
+      tags: [Admin]
+      summary: List users with optional filters
+      parameters:
+        - $ref: '#/components/parameters/page'
+        - $ref: '#/components/parameters/limit'
+        - name: role
+          in: query
+          schema:
+            type: string
+            enum: [user, student, teacher, admin, superAdmin]
+        - name: search
+          in: query
+          schema:
+            type: string
+        - name: sort
+          in: query
+          schema:
+            type: string
+            enum: [createdAt, '-createdAt', userName, '-userName']
+      responses:
+        '200':
+          description: Paginated user list
+        '403':
+          description: Admin or superAdmin role required
+  /auth/admin/users/{id}:
+    parameters:
+      - $ref: '#/components/parameters/id'
+    get:
+      tags: [Admin]
+      summary: Get a user by ID
+      responses:
+        '200':
+          description: User details
+        '404':
+          description: User not found
+    put:
+      tags: [Admin]
+      summary: Update a user's profile fields
+      description: This endpoint cannot change the user's role.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                userName:
+                  type: string
+                  maxLength: 20
+                email:
+                  type: string
+                  format: email
+                phone:
+                  type: string
+                gender:
+                  type: string
+                  enum: [male, female]
+                confirmEmail:
+                  type: boolean
+      responses:
+        '200':
+          description: User updated
+        '400':
+          description: Invalid request
+    delete:
+      tags: [Admin]
+      summary: Soft-delete a user account
+      responses:
+        '200':
+          description: User deleted
+        '403':
+          description: Operation is not allowed for this account
+  /auth/admin/teachers:
+    get:
+      tags: [Admin]
+      summary: List teachers
+      parameters:
+        - $ref: '#/components/parameters/page'
+        - $ref: '#/components/parameters/limit'
+        - name: search
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Paginated teacher list
+  /auth/admin/teachers/{id}:
+    parameters:
+      - $ref: '#/components/parameters/id'
+    get:
+      tags: [Admin]
+      summary: Get a teacher by ID
+      responses:
+        '200':
+          description: Teacher details
+        '404':
+          description: Teacher not found
+    delete:
+      tags: [Admin]
+      summary: Soft-delete a teacher profile
+      responses:
+        '200':
+          description: Teacher deleted
+        '404':
+          description: Teacher not found
+  /auth/admin/reset-password:
+    post:
+      tags: [Admin]
+      summary: Set a user's password as an admin
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [id, newPassword, CnewPassword]
+              properties:
+                id:
+                  type: string
+                  pattern: '^[0-9a-fA-F]{24}$'
+                  example: 507f1f77bcf86cd799439011
+                newPassword:
+                  type: string
+                  format: password
+                CnewPassword:
+                  type: string
+                  format: password
+      responses:
+        '200':
+          description: Password reset
+        '403':
+          description: Only a superAdmin can reset privileged account passwords
+  /auth/admin/audit-logs:
+    get:
+      tags: [Admin]
+      summary: List account audit logs
+      parameters:
+        - $ref: '#/components/parameters/page'
+        - $ref: '#/components/parameters/limit'
+        - name: action
+          in: query
+          schema:
+            type: string
+        - name: performedBy
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Paginated audit log entries
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+  parameters:
+    id:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        pattern: '^[0-9a-fA-F]{24}$'
+        example: 507f1f77bcf86cd799439011
+    page:
+      name: page
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+    limit:
+      name: limit
+      in: query
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 100
+  schemas:
+    SignupRequest:
+      type: object
+      required: [userName, email, password, phone, gender]
+      properties:
+        userName:
+          type: string
+          example: Ahmad
+        email:
+          type: string
+          format: email
+          example: ahmad@example.com
+        password:
+          type: string
+          format: password
+          example: ExamplePassword123!
+        phone:
+          type: string
+          example: '+970599123456'
+        gender:
+          type: string
+          enum: [male, female]
+    SigninRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+          example: ahmad@example.com
+        password:
+          type: string
+          format: password
+          example: ExamplePassword123!
+    SigninResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+        message:
+          type: string
+        token:
+          type: string
+        role:
+          type: string
+          enum: [user, student, teacher, admin, superAdmin]
+    EmailRequest:
+      type: object
+      required: [email]
+      properties:
+        email:
+          type: string
+          format: email
+          example: ahmad@example.com
+    ForgotPasswordRequest:
+      type: object
+      required: [email, NEWpassword, Cpassword, code]
+      properties:
+        email:
+          type: string
+          format: email
+        NEWpassword:
+          type: string
+          format: password
+        Cpassword:
+          type: string
+          format: password
+        code:
+          type: string
+          pattern: '^\d{8}$'
+          example: '12345678'

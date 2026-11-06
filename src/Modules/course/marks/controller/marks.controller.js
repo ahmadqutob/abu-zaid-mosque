@@ -1,8 +1,44 @@
-import { asyncHandler } from "../../../Services/ErrorHandler.services.js";
-import Mark from "../../../../database/Models/marks.model.js";
-import Course from "../../../../database/Models/course.model.js";
-import User from "../../../../database/Models/user.model.js";
-import { sendEmail } from "../../../Services/SendEmail.services.js";
+import Mark from "../../../../../database/Models/marks.model.js";
+import Course from "../../../../../database/Models/course.model.js";
+import Registration from "../../../../../database/Models/enrollment.model.js";
+import User from "../../../../../database/Models/user.model.js";
+import { sendEmail } from "../../../../Services/SendEmail.services.js";
+import { asyncHandler } from "../../../../Services/ErrorHandler.services.js";
+
+const escapeHtml = (value = "") => String(value).replace(/[&<>"']/g, (character) => ({
+  "&": "&amp;",
+  "<": "&lt;",
+  ">": "&gt;",
+  '"': "&quot;",
+  "'": "&#39;",
+}[character]));
+
+const notifyStudentAboutMark = (student, courseName, title, update = false) => {
+  if (!student?.email) return;
+
+  const safeName = escapeHtml(student.userName || "Student");
+  const safeCourseName = escapeHtml(courseName);
+  const safeTitle = escapeHtml(title);
+  const action = update ? "updated" : "added";
+  const subject = `${update ? "Mark Updated" : "New Mark Added"} - ${courseName}`;
+  const message = `<p>Hello <strong>${safeName}</strong>,</p><p>A mark for <strong>${safeTitle}</strong> was ${action} in the course <strong>${safeCourseName}</strong>. Please check your course marks.</p>`;
+
+  // Notification delivery is best-effort; it must not fail a saved mark change.
+  sendEmail(student.email, subject, message).catch((error) => {
+    console.error("Error sending mark notification email:", error);
+  });
+};
+
+const getStudentVisibleCourseIds = async (studentId) => {
+  const approvedRegistrations = await Registration.find({
+    studentId,
+    status: "approved",
+  }).select("courseId");
+  return Course.find({
+    _id: { $in: approvedRegistrations.map((registration) => registration.courseId) },
+    softDelete: false,
+  }).distinct("_id");
+};
 
 // ─── CREATE MARK ─────────────────────────────────────────────────────────────
 /**
@@ -30,9 +66,22 @@ export const createMark = asyncHandler(async (req, res, next) => {
   }
 
   // 3. Verify student exists
-  const student = await User.findOne({ _id: studentId, deletedAt: null });
+  const student = await User.findOne({ _id: studentId, deletedAt: null, role: "student" });
   if (!student) {
-    return res.status(404).json({ success: false, message: "Student not found" });
+    return res.status(404).json({ success: false, message: "Active student account not found" });
+  }
+
+  // Marks are only for students who have actually been approved into the course.
+  const approvedEnrollment = await Registration.findOne({
+    courseId,
+    studentId,
+    status: "approved",
+  }).select("_id");
+  if (!approvedEnrollment) {
+    return res.status(400).json({
+      success: false,
+      message: "Student must have an approved enrollment in this course before receiving marks",
+    });
   }
 
   // 4. Validate score logic
@@ -61,14 +110,7 @@ export const createMark = asyncHandler(async (req, res, next) => {
     .populate("gradedBy", "userName email role");
 
   // 6. Notify student via email
-  if (student.email) {
-    const subject = `New Mark Added - ${course.name}`;
-    const message = `<p>Hello <strong>${student.userName || "Student"}</strong>,</p><p>You have a new mark added for the course <strong>${course.name}</strong>. Please check it from your course marks.</p>`;
-
-    sendEmail(student.email, subject, message).catch((err) => {
-      console.error("Error sending mark notification email:", err);
-    });
-  }
+  notifyStudentAboutMark(student, course.name, title);
 
   return res.status(201).json({
     success: true,
@@ -101,9 +143,10 @@ export const getAllMarks = asyncHandler(async (req, res, next) => {
   const filter = { softDelete: false };
 
   // Role Scoping
-  if (req.user.role === "student" || req.user.role === "user") {
-    // Students can only view their own marks
+  if (req.user.role === "student") {
+    // Students can see their own marks only in courses they are approved for.
     filter.studentId = req.user._id;
+    filter.courseId = { $in: await getStudentVisibleCourseIds(req.user._id) };
   } else if (req.user.role === "teacher") {
     // Teachers can only view marks for courses they teach
     const teacherCourses = await Course.find({ teacherId: req.user._id, softDelete: false }).select("_id");
@@ -113,15 +156,15 @@ export const getAllMarks = asyncHandler(async (req, res, next) => {
 
   // Additional Filters
   if (courseId) {
-    if (filter.courseId && filter.courseId.$in) {
-      // Ensure requested courseId belongs to teacher
-      const isTeacherCourse = filter.courseId.$in.some(
+    if (filter.courseId?.$in) {
+      // Students and teachers can narrow the list only to courses they can access.
+      const isAccessibleCourse = filter.courseId.$in.some(
         (id) => id.toString() === courseId.toString()
       );
-      if (!isTeacherCourse) {
+      if (!isAccessibleCourse) {
         return res.status(403).json({
           success: false,
-          message: "Access denied: You do not teach this course",
+          message: "Access denied: You are not enrolled in or assigned to this course",
         });
       }
     }
@@ -170,7 +213,7 @@ export const getMarkById = asyncHandler(async (req, res, next) => {
   const { id } = req.params;
 
   const mark = await Mark.findOne({ _id: id, softDelete: false })
-    .populate("courseId", "name category level teacherId")
+    .populate("courseId", "name category level teacherId softDelete")
     .populate("studentId", "userName email")
     .populate("gradedBy", "userName email role");
 
@@ -178,10 +221,24 @@ export const getMarkById = asyncHandler(async (req, res, next) => {
     return res.status(404).json({ success: false, message: "Mark not found" });
   }
 
+  // A mark whose course was removed should not expose course or student data,
+  // and must not cause role checks below to dereference a missing population.
+  if (!mark.courseId || mark.courseId.softDelete) {
+    return res.status(404).json({ success: false, message: "Mark not found" });
+  }
+
   // Permission Check
-  if (req.user.role === "student" || req.user.role === "user") {
+  if (req.user.role === "student") {
     if (mark.studentId._id.toString() !== req.user._id.toString()) {
       return res.status(403).json({ success: false, message: "Access denied" });
+    }
+    const approvedEnrollment = await Registration.findOne({
+      courseId: mark.courseId._id,
+      studentId: req.user._id,
+      status: "approved",
+    }).select("_id");
+    if (!approvedEnrollment) {
+      return res.status(403).json({ success: false, message: "You are not enrolled in this course" });
     }
   } else if (req.user.role === "teacher") {
     if (mark.courseId.teacherId.toString() !== req.user._id.toString()) {
@@ -201,6 +258,9 @@ export const getMarkById = asyncHandler(async (req, res, next) => {
  */
 export const getMarksByCourse = asyncHandler(async (req, res, next) => {
   const { courseId } = req.params;
+  const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+  const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 10));
+  const skip = (page - 1) * limit;
 
   const course = await Course.findOne({ _id: courseId, softDelete: false });
   if (!course) {
@@ -209,8 +269,16 @@ export const getMarksByCourse = asyncHandler(async (req, res, next) => {
 
   const filter = { courseId, softDelete: false };
 
-  if (req.user.role === "student" || req.user.role === "user") {
+  if (req.user.role === "student") {
     filter.studentId = req.user._id;
+    const approvedEnrollment = await Registration.findOne({
+      courseId,
+      studentId: req.user._id,
+      status: "approved",
+    }).select("_id");
+    if (!approvedEnrollment) {
+      return res.status(403).json({ success: false, message: "You are not enrolled in this course" });
+    }
   } else if (req.user.role === "teacher") {
     if (course.teacherId.toString() !== req.user._id.toString()) {
       return res.status(403).json({
@@ -220,16 +288,22 @@ export const getMarksByCourse = asyncHandler(async (req, res, next) => {
     }
   }
 
-  const marks = await Mark.find(filter)
-    .populate("courseId", "name category level")
-    .populate("studentId", "userName email")
-    .populate("gradedBy", "userName email role")
-    .sort("-createdAt")
-    .lean();
+  const [marks, total] = await Promise.all([
+    Mark.find(filter)
+      .populate("courseId", "name category level")
+      .populate("studentId", "userName email")
+      .populate("gradedBy", "userName email role")
+      .sort("-createdAt")
+      .skip(skip)
+      .limit(limit)
+      .lean(),
+    Mark.countDocuments(filter),
+  ]);
 
   return res.status(200).json({
     success: true,
     count: marks.length,
+    pagination: { page, limit, total, pages: Math.ceil(total / limit) },
     data: marks,
   });
 });
@@ -259,6 +333,10 @@ export const getMarksByStudent = asyncHandler(async (req, res, next) => {
     filter.courseId = { $in: teacherCourseIds };
   }
 
+  if (req.user.role === "student") {
+    filter.courseId = { $in: await getStudentVisibleCourseIds(req.user._id) };
+  }
+
   const marks = await Mark.find(filter)
     .populate("courseId", "name category level")
     .populate("studentId", "userName email")
@@ -280,7 +358,12 @@ export const getMarksByStudent = asyncHandler(async (req, res, next) => {
  */
 export const updateMark = asyncHandler(async (req, res, next) => {
   const { id } = req.params;
-  const updateData = { ...req.body };
+  // Explicitly whitelist editable assessment fields. In particular, callers
+  // cannot move a mark to another course/student or change its grader.
+  const updateData = {};
+  for (const field of ["title", "type", "score", "maxScore", "feedback"]) {
+    if (req.body[field] !== undefined) updateData[field] = req.body[field];
+  }
 
   const existingMark = await Mark.findOne({ _id: id, softDelete: false }).populate("courseId");
   if (!existingMark) {
@@ -318,6 +401,17 @@ export const updateMark = asyncHandler(async (req, res, next) => {
     .populate("courseId", "name category level")
     .populate("studentId", "userName email")
     .populate("gradedBy", "userName email role");
+
+  if (!updatedMark) {
+    return res.status(404).json({ success: false, message: "Mark not found" });
+  }
+
+  notifyStudentAboutMark(
+    updatedMark.studentId,
+    updatedMark.courseId.name,
+    updatedMark.title,
+    true
+  );
 
   return res.status(200).json({
     success: true,

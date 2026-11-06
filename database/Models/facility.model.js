@@ -3,8 +3,8 @@ import mongoose, { Schema, model } from "mongoose";
 const facilitySchema = new Schema(
   {
     facilityId: {
+      // Internal key for the mosque's single rentable hall.
       type: Schema.Types.ObjectId,
-      ref: "Booking",
       required: [true, "Facility ID is required"],
     },
     renterName: {
@@ -29,11 +29,22 @@ const facilitySchema = new Schema(
     endDate: {
       type: Date,
       required: [true, "End date is required"],
+      validate: {
+        validator(value) {
+          return !this.startDate || value > this.startDate;
+        },
+        message: "End date must be after start date",
+      },
     },
     totalPrice: {
       type: Number,
       required: [true, "Total price is required"],
       min: [0, "Total price cannot be negative"],
+    },
+    hourlyRate: {
+      type: Number,
+      default: 20,
+      min: [0, "Hourly rate cannot be negative"],
     },
     status: {
       type: String,

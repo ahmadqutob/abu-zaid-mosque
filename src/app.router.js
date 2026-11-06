@@ -1,5 +1,5 @@
-import connectDB from '../database/ConnectDB.js'
 import authRouter from './Modules/auth/auth.router.js'
+import invitationRouter from './Modules/invitation/invitation.router.js'
 import prayerTimesRouter from './Modules/prayerTimes/prayerTimes.router.js'
 import nextFridayRouter from './Modules/nextFriday/nextFriday.router.js'
 import eventRouter from './Modules/event/event.router.js'
@@ -16,7 +16,8 @@ import cors from 'cors'
 
 const initApp = (app, express, next) => {
 
-  connectDB();
+  // Production traffic reaches Node through one Nginx proxy on the same VPS.
+  app.set('trust proxy', 1);
 
   app.use(express.json());
   app.use(cors({
@@ -26,6 +27,7 @@ const initApp = (app, express, next) => {
 
   // Abuzaid Mosque API routes
   app.use("/auth", authRouter)
+  app.use("/invitations", invitationRouter)
   app.use("/prayer-times", prayerTimesRouter)
   app.use("/next-friday", nextFridayRouter)
   app.use("/event", eventRouter)
@@ -56,13 +58,21 @@ const initApp = (app, express, next) => {
   // global error handlers
   // Express will automatically pass errors to this middleware when next(error) is called anywhere.
 app.use((err, req, res, next) => {
+  if (err?.type === "entity.parse.failed" || (err instanceof SyntaxError && err.status === 400 && Object.hasOwn(err, "body"))) {
+    return res.status(400).json({
+      message: "Invalid JSON request body. Use double quotes and check for a missing quote or trailing comma.",
+    });
+  }
   console.error(err.stack); // optional: log errors in dev
+  const authTokenError = ["JsonWebTokenError", "TokenExpiredError", "NotBeforeError"].includes(err.name);
+  const statusCode = err.statusCode ||
+    (typeof err.cause === "number" ? err.cause : authTokenError ? 401 : 500);
 
 if (process.env.NODE_ENV === 'development') {
   console.error(err.message);
-  return res.status(err.statusCode || 500).json({ message: err.message, stack: err.stack });
+  return res.status(statusCode).json({ message: err.message, stack: err.stack });
 }
-return res.status(err.statusCode || 500).json({ message: "Something went wrong." });
+return res.status(statusCode).json({ message: statusCode >= 500 ? "Something went wrong." : err.message });
 
 // stack The file and line number where the error was thrown.
   
@@ -70,4 +80,3 @@ return res.status(err.statusCode || 500).json({ message: "Something went wrong."
  
 }
 export default initApp
- 

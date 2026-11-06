@@ -5,13 +5,15 @@ import * as postValidation from "./post.validation.js";
 import * as postController from "./controller/post.controller.js";
 
 const router = Router({ mergeParams: true });
+const POST_READ_ROLES = ["superAdmin", "admin", "teacher", "student"];
+const POST_STAFF_ROLES = ["superAdmin", "admin", "teacher"];
 
 // ─── Read Routes ─────────────────────────────────────────────────────────────
 
 // GET /all - List all posts with filters, search, and pagination
 router.get(
   "/all",
-  authorization(["admin", "teacher", "student", "user"]),
+  authorization(POST_READ_ROLES),
   validation(postValidation.getCoursePosts),
   postController.getCoursePosts
 );
@@ -19,7 +21,7 @@ router.get(
 // GET /course/:courseId - Get all posts for a specific course
 router.get(
   "/course/:courseId",
-  authorization(["admin", "teacher", "student", "user"]),
+  authorization(POST_READ_ROLES),
   validation(postValidation.courseIdParam),
   postController.getPostsByCourseId
 );
@@ -27,7 +29,7 @@ router.get(
 // GET /:id - Get single post by ID
 router.get(
   "/:id",
-  authorization(["admin", "teacher", "student", "user"]),
+  authorization(POST_READ_ROLES),
   validation(postValidation.postIdParam),
   postController.getCoursePostById
 );
@@ -36,8 +38,8 @@ router.get(
 
 // POST /create - Create a new course post
 router.post(
-  "/create",
-  authorization(["admin", "teacher"]),
+  "/create-post",
+  authorization(POST_STAFF_ROLES),
   validation(postValidation.createCoursePost),
   postController.createCoursePost
 );
@@ -45,7 +47,7 @@ router.post(
 // PUT /update/:id - Update an existing course post
 router.put(
   "/update/:id",
-  authorization(["admin", "teacher"]),
+  authorization(POST_STAFF_ROLES),
   validation(postValidation.updateCoursePost),
   postController.updateCoursePost
 );
@@ -53,7 +55,7 @@ router.put(
 // PATCH /pin/:id - Toggle pin state of a post
 router.patch(
   "/pin/:id",
-  authorization(["admin", "teacher"]),
+  authorization(POST_STAFF_ROLES),
   validation(postValidation.postIdParam),
   postController.togglePinPost
 );
@@ -61,7 +63,7 @@ router.patch(
 // DELETE /delete/:id - Soft delete a course post
 router.delete(
   "/delete/:id",
-  authorization(["admin", "teacher"]),
+  authorization(POST_STAFF_ROLES),
   validation(postValidation.postIdParam),
   postController.deleteCoursePost
 );

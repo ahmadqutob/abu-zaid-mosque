@@ -1,17 +1,43 @@
 import { asyncHandler } from "../../../Services/ErrorHandler.services.js";
 import Course from "../../../../database/Models/course.model.js";
 import User from "../../../../database/Models/user.model.js";
-import Student from "../../../../database/Models/student.model.js";
+import Registration from "../../../../database/Models/enrollment.model.js";
+import {
+  canManageCourse,
+  canViewCourse,
+  isCourseManager,
+  publicCourseFilter,
+} from "../course.access.js";
+
+const COURSE_UPDATE_FIELDS = [
+  "teacherId", "name", "description", "category", "level", "gender",
+  "minAge", "maxAge", "startDate", "endDate", "schedule", "sessionType",
+  "location", "enrollmentStatus", "maxStudents", "isFree", "price",
+  "certificate", "requirements", "status",
+];
+
+const publicTeacherProjection = "userName";
+
+const canManageCourseOrRespond = (req, res, course) => {
+  if (canManageCourse(req.user, course)) return true;
+  res.status(403).json({ success: false, message: "You can manage only courses assigned to you" });
+  return false;
+};
 
 
 // ─── CREATE ───────────────────────────────────────────────────────────────────
 
 export const createCourse = asyncHandler(async (req, res, next) => {
-  const courseData = { ...req.body };
+  // Never accept counters, soft-delete flags, or audit fields from the client.
+  const courseData = Object.fromEntries(
+    COURSE_UPDATE_FIELDS
+      .filter((field) => req.body[field] !== undefined)
+      .map((field) => [field, req.body[field]])
+  );
 
   // Verify the teacher exists in the DB and has an allowed role
   const teacher = await User.findById(courseData.teacherId).select("role deletedAt");
-  if (!teacher || teacher.deletedAt) {
+  if (!teacher || teacher.deletedAt || teacher.role !== "teacher") {
     return res.status(400).json({ success: false, message: "Teacher not found. Provide a valid teacher ID." });
   }
 
@@ -19,22 +45,14 @@ export const createCourse = asyncHandler(async (req, res, next) => {
   if (req.user.role === "teacher") {
     courseData.teacherId = req.user._id;
   }
+  courseData.createdBy = req.user._id;
+  courseData.updatedBy = req.user._id;
 
   // Free courses: force price to null
   if (courseData.isFree) {
     courseData.price = null;
   }
 
-  if(courseData.currentStudentsCount === courseData.maxStudents){
-    courseData.enrollmentStatus = "closed";
-  }
-
-  if(courseData.isFree == true){
-    courseData.price = null;
-  }
-
- 
-   
   const course = await Course.create(courseData);
   return res.status(201).json({
     success: true,
@@ -77,6 +95,32 @@ export const getAllCourses = asyncHandler(async (req, res, next) => {
   // ── Build filter ──────────────────────────────────────────────
   const filter = { softDelete: false };
 
+  // Public visitors and normal users see only published, open, pre-start courses.
+  // Staff can see all non-deleted courses; teachers also see their own courses.
+  let visibilityFilter = publicCourseFilter();
+  if (isCourseManager(req.user)) {
+    visibilityFilter = null;
+  } else if (req.user?.role === "teacher") {
+    visibilityFilter = {
+      $or: [
+        publicCourseFilter(),
+        { teacherId: req.user._id, softDelete: false },
+      ],
+    };
+  } else if (req.user?.role === "student") {
+    const approvedRegistrations = await Registration.find({
+      studentId: req.user._id,
+      status: "approved",
+    }).select("courseId");
+    const approvedCourseIds = approvedRegistrations.map((registration) => registration.courseId);
+    visibilityFilter = {
+      $or: [
+        publicCourseFilter(),
+        { _id: { $in: approvedCourseIds }, softDelete: false },
+      ],
+    };
+  }
+
   if (category)        filter.category        = category;
   if (level)           filter.level           = level;
   if (gender)          filter.gender          = gender;
@@ -99,10 +143,12 @@ export const getAllCourses = asyncHandler(async (req, res, next) => {
     ];
   }
 
+  if (visibilityFilter) filter.$and = [visibilityFilter];
+
   // ── Execute ───────────────────────────────────────────────────
   const [courses, total] = await Promise.all([
     Course.find(filter)
-      .populate("teacherId", "userName email role")
+      .populate("teacherId", publicTeacherProjection)
       .sort(sort)
       .skip(skip)
       .limit(numericLimit)
@@ -132,9 +178,14 @@ export const getCourseById = asyncHandler(async (req, res, next) => {
   const { id } = req.params;
 
   const course = await Course.findOne({ _id: id, softDelete: false })
-    .populate("teacherId", "userName email role");
+    .populate("teacherId", publicTeacherProjection);
 
   if (!course) {
+    return res.status(404).json({ success: false, message: "Course not found" });
+  }
+
+  if (!(await canViewCourse(req.user, course))) {
+    // Do not reveal that a private, started course exists to an unauthorized user.
     return res.status(404).json({ success: false, message: "Course not found" });
   }
 
@@ -151,9 +202,12 @@ export const getCourseBySlug = asyncHandler(async (req, res, next) => {
   const { slug } = req.params;
 
   const course = await Course.findOne({ slug, softDelete: false })
-    .populate("teacherId", "userName email role");
+    .populate("teacherId", publicTeacherProjection);
 
   if (!course) {
+    return res.status(404).json({ success: false, message: "Course not found" });
+  }
+  if (!(await canViewCourse(req.user, course))) {
     return res.status(404).json({ success: false, message: "Course not found" });
   }
 
@@ -164,24 +218,33 @@ export const getCourseBySlug = asyncHandler(async (req, res, next) => {
 
 export const updateCourse = asyncHandler(async (req, res, next) => {
   const { id } = req.params;
-  const updateData = { ...req.body };
+  const updateData = Object.fromEntries(
+    COURSE_UPDATE_FIELDS
+      .filter((field) => req.body[field] !== undefined)
+      .map((field) => [field, req.body[field]])
+  );
 
   const existingCourse = await Course.findOne({ _id: id, softDelete: false });
 
   if (!existingCourse) {
     return res.status(404).json({ success: false, message: "Course not found" });
   }
+  if (!canManageCourseOrRespond(req, res, existingCourse)) return;
 
   // ── Teacher ID verification ───────────────────────────────────
   if (updateData.teacherId) {
     const teacher = await User.findById(updateData.teacherId).select("role deletedAt");
-    if (!teacher || teacher.deletedAt) {
+    if (!teacher || teacher.deletedAt || teacher.role !== "teacher") {
       return res.status(400).json({
         success: false,
         message: "Teacher not found. Provide a valid teacher ID.",
       });
     }
   }
+  if (req.user.role === "teacher" && updateData.teacherId) {
+    updateData.teacherId = req.user._id;
+  }
+  updateData.updatedBy = req.user._id;
 
 
   // ── Price logic ───────────────────────────────────────────────
@@ -258,8 +321,9 @@ export const deleteCourse = asyncHandler(async (req, res, next) => {
   if (!course) {
     return res.status(404).json({ success: false, message: "Course not found" });
   }
+  if (!canManageCourseOrRespond(req, res, course)) return;
 
-  await Course.findByIdAndUpdate(id, { softDelete: true });
+  await Course.findByIdAndUpdate(id, { softDelete: true, updatedBy: req.user._id });
 
   return res.status(200).json({
     success: true,
@@ -282,8 +346,9 @@ export const restoreCourse = asyncHandler(async (req, res, next) => {
   if (!course) {
     return res.status(404).json({ success: false, message: "Soft-deleted course not found" });
   }
+  if (!canManageCourseOrRespond(req, res, course)) return;
 
-  await Course.findByIdAndUpdate(id, { softDelete: false });
+  await Course.findByIdAndUpdate(id, { softDelete: false, updatedBy: req.user._id });
 
   return res.status(200).json({
     success: true,
@@ -308,8 +373,10 @@ export const changeCourseStatus = asyncHandler(async (req, res, next) => {
   if (!course) {
     return res.status(404).json({ success: false, message: "Course not found" });
   }
+  if (!canManageCourseOrRespond(req, res, course)) return;
 
   course.status = status;
+  course.updatedBy = req.user._id;
   
   // Auto-close enrollment if course is cancelled or archived
   if (["cancelled", "archived"].includes(status)) {
@@ -342,6 +409,7 @@ export const changeEnrollmentStatus = asyncHandler(async (req, res, next) => {
   if (!course) {
     return res.status(404).json({ success: false, message: "Course not found" });
   }
+  if (!canManageCourseOrRespond(req, res, course)) return;
 
   // Business rules for enrollment status
   if (["open", "ongoing"].includes(enrollmentStatus)) {
@@ -360,6 +428,7 @@ export const changeEnrollmentStatus = asyncHandler(async (req, res, next) => {
   }
 
   course.enrollmentStatus = enrollmentStatus;
+  course.updatedBy = req.user._id;
   await course.save();
 
   return res.status(200).json({
@@ -384,14 +453,20 @@ export const changeEnrollmentStatus = asyncHandler(async (req, res, next) => {
 export const getTeacherCourses = asyncHandler(async (req, res, next) => {
   const { teacherId } = req.params;
 
-  const teacher = await User.findById(teacherId).select("userName email role");
+  const teacher = await User.findOne({ _id: teacherId, role: "teacher", deletedAt: null }).select("userName");
   if (!teacher) {
     return res.status(404).json({ success: false, message: "Teacher not found" });
   }
 
-  const courses = await Course.find({ teacherId, softDelete: false })
-    .populate("teacherId", "userName email role")
+  if (req.user.role === "teacher" && teacherId !== req.user._id.toString()) {
+    return res.status(403).json({ success: false, message: "You can view only your own courses" });
+  }
+
+  const candidateCourses = await Course.find({ teacherId, softDelete: false })
+    .populate("teacherId", publicTeacherProjection)
     .sort("-createdAt");
+  const visibility = await Promise.all(candidateCourses.map((course) => canViewCourse(req.user, course)));
+  const courses = candidateCourses.filter((course, index) => visibility[index]);
 
   return res.status(200).json({
     success: true,
@@ -408,9 +483,12 @@ export const getTeacherCourseById = asyncHandler(async (req, res, next) => {
   const { courseId } = req.params;
 
   const course = await Course.findOne({ _id: courseId, softDelete: false })
-    .populate("teacherId", "userName email role");
+    .populate("teacherId", publicTeacherProjection);
 
   if (!course) {
+    return res.status(404).json({ success: false, message: "Course not found" });
+  }
+  if (!(await canViewCourse(req.user, course))) {
     return res.status(404).json({ success: false, message: "Course not found" });
   }
 
@@ -431,17 +509,18 @@ export const getStudentsInCourse = asyncHandler(async (req, res, next) => {
   if (!course) {
     return res.status(404).json({ success: false, message: "Course not found" });
   }
+  if (!canManageCourseOrRespond(req, res, course)) return;
 
-  // Find enrolled students in studentModel
-  const students = await Student.find({
-    coursesEnrolled: { $in: [courseId, courseId.toString()] },
-  }).populate("userId", "userName email phone gender");
+  // Approved registrations are the source of truth for course participants.
+  const students = await Registration.find({ courseId, status: "approved" })
+    .populate("studentId", "userName email phone gender")
+    .sort({ createdAt: 1 });
 
   return res.status(200).json({
     success: true,
     courseName: course.name,
     count: students.length,
-    data: students,
+    data: students.map((registration) => registration.studentId).filter(Boolean),
   });
 });
 

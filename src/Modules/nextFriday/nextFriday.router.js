@@ -1,15 +1,39 @@
 import { Router } from "express";
-import authorization from "../../Middleware/authorization.middleware.js";
+import authorization, { ROLES_STAFF } from "../../Middleware/authorization.middleware.js";
 import fileUpload, { fileValidation } from "../../Middleware/multer.middleware.js";
-import validation from "../../Middleware/validation.middleware.js";
+import { unlink } from "node:fs/promises";
 import * as nextFridayValidation from "./nextFriday.validation.js";
 import * as nextFridayController from "./Controller/nextFriday.controller.js";
 
 const router = new Router();
 
-// Create a nextFriday entry (admin & teacher)
+// Validate the actual body and uploaded file, never values supplied via query strings.
+const validation = schema => async (req, res, next) => {
+    const { image: ignoredImage, id: ignoredId, ...body } = req.body || {};
+    const input = { ...body, ...req.params };
+    if (req.files?.image?.length) input.image = req.files.image;
+    const { error, value } = schema.validate(input, { abortEarly: false, stripUnknown: true });
+    if (error) {
+        await Promise.all((req.files?.image || []).map(file => unlink(file.path).catch(error => {
+            if (error.code !== "ENOENT") console.error("NextFriday validation cleanup failed", error);
+        })));
+        return res.status(400).json({ message: "ERRORS", errors: error.details.map(detail => detail.message) });
+    }
+    const { image, id, ...validatedBody } = value;
+    req.body = validatedBody;
+    return next();
+};
+
+// Validate path parameters separately so query/body fields cannot override the ID.
+const validateId = (req, res, next) => {
+    const { error } = nextFridayValidation.nextFridayId.validate(req.params);
+    if (error) return res.status(400).json({ message: "ERRORS", errors: error.details.map(detail => detail.message) });
+    return next();
+};
+
+// Create a nextFriday entry (staff)
 router.post("/create",
-    authorization(["admin", "teacher"]),
+    authorization(ROLES_STAFF),
     fileUpload(fileValidation.image).fields([
         { name: 'image', maxCount: 1 }
     ]),
@@ -22,10 +46,13 @@ router.get("/all",
     nextFridayController.getAllNextFridays
 );
 
+router.get("/upcoming", nextFridayController.getUpcomingFriday);
 
-// Update nextFriday entry (admin & teacher)
+
+// Update nextFriday entry (staff)
 router.put("/update/:id",
-    authorization(["admin", "teacher"]),
+    authorization(ROLES_STAFF),
+    validateId,
     fileUpload(fileValidation.image).fields([
         { name: 'image', maxCount: 1 }
     ]),
@@ -33,10 +60,10 @@ router.put("/update/:id",
     nextFridayController.updateNextFriday
 );
 
-// Delete nextFriday entry (admin & teacher)
+// Delete nextFriday entry (staff)
 router.delete("/delete/:id",
-    authorization(["admin", "teacher"]),
-    validation(nextFridayValidation.nextFridayId),
+    authorization(ROLES_STAFF),
+    validateId,
     nextFridayController.deleteNextFriday
 );
 

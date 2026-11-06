@@ -19,14 +19,13 @@ export const createTeacherProfile = asyncHandler(async (req, res, next) => {
     return res.status(404).json({ success: false, message: "User account not found" });
   }
 
-  // 2. Check if teacher profile already exists for this user
-  const existingTeacher = await Teacher.findOne({ userId, deletedAt: null });
-  if (existingTeacher) {
-    return res.status(400).json({
-      success: false,
-      message: "Teacher profile already exists for this user",
-    });
+  // Role promotion must happen through an accepted invitation.
+  if (user.role !== "teacher") {
+    return res.status(403).json({ success: false, message: "Only an invited teacher can receive a teacher profile" });
   }
+
+  // The invitation flow creates a basic profile; this endpoint fills in its details.
+  const existingTeacher = await Teacher.findOne({ userId, deletedAt: null });
 
   // 3. Handle image upload if provided
   const imageFile = req.files?.image?.[0] || req.file;
@@ -49,22 +48,14 @@ export const createTeacherProfile = asyncHandler(async (req, res, next) => {
       }
     }
 
-    // 4. Update user role to 'teacher' if currently user or student
-    if (user.role !== "teacher" && user.role !== "admin" && user.role !== "superAdmin") {
-      user.role = "teacher";
-      await user.save();
-    }
-
-    // 5. Create teacher profile
-    const teacher = await Teacher.create({
-      userId,
-      specialization: specialization || "",
-      qualification: qualification || "",
-      bio: bio || "",
-      experienceYears: experienceYears ? Number(experienceYears) : 0,
-      image: imageData,
-      createdBy: req.user?._id,
-    });
+    // Create or update profile details without changing the user's role.
+    const teacher = existingTeacher || new Teacher({ userId, createdBy: req.user?._id });
+    teacher.specialization = specialization || "";
+    teacher.qualification = qualification || "";
+    teacher.bio = bio || "";
+    teacher.experienceYears = experienceYears ? Number(experienceYears) : 0;
+    if (imageFile) teacher.image = imageData;
+    await teacher.save();
 
     const populatedTeacher = await Teacher.findById(teacher._id)
       .populate("userId", "userName email phone gender role")

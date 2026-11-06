@@ -1,8 +1,15 @@
 import Joi from "joi";
+import { isFriday } from "./nextFriday.dates.js";
+
+const fridayDate = Joi.date().iso().custom((value, helpers) =>
+  isFriday(value) ? value : helpers.message('Date must fall on a Friday in Asia/Hebron')
+);
+const description = Joi.string().trim().max(2000).allow('');
 
 // Validation schema for creating nextFriday
 export const createNextFriday = Joi.object({
   title: Joi.string()
+    .trim()
     .min(3)
     .max(100)
     .required()
@@ -14,6 +21,7 @@ export const createNextFriday = Joi.object({
     }),
   
   name: Joi.string()
+    .trim()
     .min(3)
     .max(100)
     .required()
@@ -24,7 +32,8 @@ export const createNextFriday = Joi.object({
       'any.required': 'Name is required'
     }),
 
-  date: Joi.date()
+  description,
+  date: fridayDate
     .required()
     .messages({
       'date.base': 'Invalid date format',
@@ -45,7 +54,7 @@ export const createNextFriday = Joi.object({
     }))
     .min(1)
     .max(1)
-    .required()
+    .optional()
     .messages({
       'any.required': 'Image is required',
       'array.min': 'Image is required',
@@ -56,7 +65,9 @@ export const createNextFriday = Joi.object({
 
 // Validation schema for updating nextFriday
 export const updateNextFriday = Joi.object({
+  id: Joi.string().pattern(/^[0-9a-fA-F]{24}$/).required(),
   title: Joi.string()
+    .trim()
     .min(3)
     .max(100)
     .optional()
@@ -66,6 +77,7 @@ export const updateNextFriday = Joi.object({
     }),
   
   name: Joi.string()
+    .trim()
     .min(3)
     .max(100)
     .optional()
@@ -74,7 +86,8 @@ export const updateNextFriday = Joi.object({
       'string.max': 'Name cannot exceed 100 characters'
     }),
 
-  date: Joi.date()
+  description,
+  date: fridayDate
     .optional()
     .messages({
       'date.base': 'Invalid date format'
@@ -91,13 +104,14 @@ export const updateNextFriday = Joi.object({
       path: Joi.string().required(),
       size: Joi.number().min(1).required()
     }))
+    .min(1)
     .max(1)
     .optional()
     .messages({
       'array.max': 'Only one image is allowed',
       'string.pattern.base': 'File must be an image file'
     }),
-});
+}).or('title', 'name', 'description', 'date', 'image');
 
 // Validation schema for nextFriday ID parameter
 export const nextFridayId = Joi.object({

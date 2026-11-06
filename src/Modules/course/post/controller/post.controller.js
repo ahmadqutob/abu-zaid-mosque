@@ -2,8 +2,23 @@ import { asyncHandler } from "../../../../Services/ErrorHandler.services.js";
 import CoursePost from "../../../../../database/Models/coursePost.model.js";
 import Course from "../../../../../database/Models/course.model.js";
 import Registration from "../../../../../database/Models/enrollment.model.js";
-import Student from "../../../../../database/Models/student.model.js";
 import { sendEmail } from "../../../../Services/SendEmail.services.js";
+import { canManageCourse, canReadCourseContent, isCourseManager } from "../../course.access.js";
+
+const escapeHtml = (value = "") => String(value).replace(/[&<>"']/g, (character) => ({
+  "&": "&amp;",
+  "<": "&lt;",
+  ">": "&gt;",
+  '"': "&quot;",
+  "'": "&#39;",
+}[character]));
+
+const postEditData = (body) => {
+  const allowedFields = ["title", "content", "type", "pinned", "attachments"];
+  return Object.fromEntries(
+    allowedFields.filter((field) => body[field] !== undefined).map((field) => [field, body[field]])
+  );
+};
 
 // ─── CREATE COURSE POST ──────────────────────────────────────────────────────
 /**
@@ -19,11 +34,8 @@ export const createCoursePost = asyncHandler(async (req, res, next) => {
     return res.status(404).json({ success: false, message: "Course not found" });
   }
 
-  // 2. Teacher ownership check
-  if (
-    req.user.role === "teacher" &&
-    course.teacherId.toString() !== req.user._id.toString()
-  ) {
+  // Only admins/superadmins and the teacher assigned to this course may post.
+  if (!canManageCourse(req.user, course)) {
     return res.status(403).json({
       success: false,
       message: "Access denied: You can only publish posts for your assigned course",
@@ -45,32 +57,24 @@ export const createCoursePost = asyncHandler(async (req, res, next) => {
     .populate("courseId", "name category level")
     .populate("authorId", "userName email role");
 
-  // 4. Send email notification asynchronously to all enrolled students
+  // Notify approved course participants only; legacy course arrays are not an
+  // authorization source because they can include unapproved registrations.
   (async () => {
     try {
-      const [registrations, students] = await Promise.all([
-        Registration.find({ courseId, status: "approved" }).populate("studentId", "userName email"),
-        Student.find({ coursesEnrolled: { $in: [courseId, courseId.toString()] } }).populate("userId", "userName email"),
-      ]);
-
+      const registrations = await Registration.find({ courseId, status: "approved" })
+        .populate("studentId", "userName email role deletedAt");
       const emailMap = new Map();
 
       registrations.forEach((reg) => {
-        if (reg.studentId && reg.studentId.email) {
+        if (reg.studentId?.email && reg.studentId.role === "student" && !reg.studentId.deletedAt) {
           emailMap.set(reg.studentId.email, reg.studentId.userName || "Student");
-        }
-      });
-
-      students.forEach((st) => {
-        if (st.userId && st.userId.email) {
-          emailMap.set(st.userId.email, st.userId.userName || "Student");
         }
       });
 
       const subject = `New Post in ${course.name}`;
 
       for (const [email, userName] of emailMap.entries()) {
-        const message = `<p>Hello <strong>${userName}</strong>,</p><p>A new post <strong>"${title}"</strong> has been published in your course <strong>${course.name}</strong>. Please check it from your course posts.</p>`;
+        const message = `<p>Hello <strong>${escapeHtml(userName)}</strong>,</p><p>A new post <strong>"${escapeHtml(title)}"</strong> has been published in your course <strong>${escapeHtml(course.name)}</strong>. Please check it from your course posts.</p>`;
         sendEmail(email, subject, message).catch((err) => {
           console.error(`Error sending post notification email to ${email}:`, err);
         });
@@ -90,7 +94,7 @@ export const createCoursePost = asyncHandler(async (req, res, next) => {
 // ─── GET ALL COURSE POSTS ────────────────────────────────────────────────────
 /**
  * GET /course/post/all or GET /course-posts/all
- * Protected (admin, teacher, student, user)
+ * Protected (admin, superAdmin, assigned teacher, approved student)
  * Filters: page, limit, courseId, type, pinned, search, sort
  */
 export const getCoursePosts = asyncHandler(async (req, res, next) => {
@@ -110,7 +114,27 @@ export const getCoursePosts = asyncHandler(async (req, res, next) => {
 
   const filter = { softDelete: false };
 
+  // Scope the feed to courses this caller is allowed to read. Normal users
+  // are intentionally not given course-workspace access by the router.
+  let visibleCourseIds = [];
+  if (isCourseManager(req.user)) {
+    visibleCourseIds = await Course.find({ softDelete: false }).distinct("_id");
+  } else if (req.user.role === "teacher") {
+    visibleCourseIds = await Course.find({ teacherId: req.user._id, softDelete: false }).distinct("_id");
+  } else if (req.user.role === "student") {
+    const registrations = await Registration.find({ studentId: req.user._id, status: "approved" }).select("courseId");
+    visibleCourseIds = await Course.find({
+      _id: { $in: registrations.map((registration) => registration.courseId) },
+      softDelete: false,
+    }).distinct("_id");
+  }
+  filter.courseId = { $in: visibleCourseIds };
+
   if (courseId) {
+    const isVisible = filter.courseId.$in.some((id) => id.toString() === courseId.toString());
+    if (!isVisible) {
+      return res.status(404).json({ success: false, message: "No course posts found" });
+    }
     filter.courseId = courseId;
   }
 
@@ -155,10 +179,13 @@ export const getCoursePostById = asyncHandler(async (req, res, next) => {
   const { id } = req.params;
 
   const post = await CoursePost.findOne({ _id: id, softDelete: false })
-    .populate("courseId", "name category level teacherId")
+    .populate("courseId", "name category level teacherId softDelete")
     .populate("authorId", "userName email role");
 
   if (!post) {
+    return res.status(404).json({ success: false, message: "Post not found" });
+  }
+  if (!post.courseId || post.courseId.softDelete || !(await canReadCourseContent(req.user, post.courseId))) {
     return res.status(404).json({ success: false, message: "Post not found" });
   }
 
@@ -178,6 +205,10 @@ export const getPostsByCourseId = asyncHandler(async (req, res, next) => {
   const course = await Course.findOne({ _id: courseId, softDelete: false });
   if (!course) {
     return res.status(404).json({ success: false, message: "Course not found" });
+  }
+
+  if (!(await canReadCourseContent(req.user, course))) {
+    return res.status(404).json({ success: false, message: "Course posts not found" });
   }
 
   const posts = await CoursePost.find({ courseId, softDelete: false })
@@ -200,21 +231,14 @@ export const getPostsByCourseId = asyncHandler(async (req, res, next) => {
  */
 export const updateCoursePost = asyncHandler(async (req, res, next) => {
   const { id } = req.params;
-  const updateData = { ...req.body };
+  const updateData = postEditData(req.body);
 
   const post = await CoursePost.findOne({ _id: id, softDelete: false }).populate("courseId");
   if (!post) {
     return res.status(404).json({ success: false, message: "Post not found" });
   }
 
-  // Authorization Check: Admin, Author, or Assigned Course Teacher
-  const isAuthor = post.authorId.toString() === req.user._id.toString();
-  const isTeacher =
-    req.user.role === "teacher" &&
-    post.courseId?.teacherId?.toString() === req.user._id.toString();
-  const isAdmin = req.user.role === "admin" || req.user.role === "superAdmin";
-
-  if (!isAuthor && !isTeacher && !isAdmin) {
+  if (!canManageCourse(req.user, post.courseId)) {
     return res.status(403).json({
       success: false,
       message: "Access denied: You do not have permission to update this post",
@@ -248,12 +272,7 @@ export const togglePinPost = asyncHandler(async (req, res, next) => {
     return res.status(404).json({ success: false, message: "Post not found" });
   }
 
-  const isTeacher =
-    req.user.role === "teacher" &&
-    post.courseId?.teacherId?.toString() === req.user._id.toString();
-  const isAdmin = req.user.role === "admin" || req.user.role === "superAdmin";
-
-  if (!isTeacher && !isAdmin) {
+  if (!canManageCourse(req.user, post.courseId)) {
     return res.status(403).json({
       success: false,
       message: "Access denied: Only the course teacher or admin can pin posts",
@@ -283,13 +302,7 @@ export const deleteCoursePost = asyncHandler(async (req, res, next) => {
     return res.status(404).json({ success: false, message: "Post not found" });
   }
 
-  const isAuthor = post.authorId.toString() === req.user._id.toString();
-  const isTeacher =
-    req.user.role === "teacher" &&
-    post.courseId?.teacherId?.toString() === req.user._id.toString();
-  const isAdmin = req.user.role === "admin" || req.user.role === "superAdmin";
-
-  if (!isAuthor && !isTeacher && !isAdmin) {
+  if (!canManageCourse(req.user, post.courseId)) {
     return res.status(403).json({
       success: false,
       message: "Access denied: You do not have permission to delete this post",
